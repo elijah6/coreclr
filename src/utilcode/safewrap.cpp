@@ -40,12 +40,9 @@ void ClrGetCurrentDirectory(SString & value)
 
     // An actual API failure in GetCurrentDirectory failure should be very rare, so we'll throw on those.
     if (len == 0)
-    {   
-        value.CloseBuffer(0);    
+    {
         ThrowLastError();
     }
-    
-    value.CloseBuffer();
 }
 
 // Nothrowing wrapper.
@@ -175,9 +172,13 @@ ClrDirectoryEnumerator::ClrDirectoryEnumerator(LPCWSTR pBaseDirectory, LPCWSTR p
     }
     CONTRACTL_END;
 
-    StackSString strMask;
-    SString s(SString::Literal, W("\\"));
-    strMask.Set(pBaseDirectory, s, pMask);
+    StackSString strMask(pBaseDirectory);
+    SString s(SString::Literal, DIRECTORY_SEPARATOR_STR_W);
+    if (!strMask.EndsWith(s))
+    {
+        strMask.Append(s);
+    }
+    strMask.Append(pMask);
     dirHandle = WszFindFirstFile(strMask, &data);
 
     if (dirHandle == INVALID_HANDLE_VALUE)

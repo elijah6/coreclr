@@ -1,5 +1,7 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+
 
 using System;
 using System.Threading;
@@ -15,6 +17,7 @@ public class FinalizeTimeout
         do
         {
             finalizableObject = new BlockingFinalizerOnShutdown();
+            GC.KeepAlive(finalizableObject);
         } while (!BlockingFinalizerOnShutdown.finalizerCompletedOnce);
 
         // Start a bunch of threads that allocate continuously, to increase the chance that when Main returns, one of the
@@ -40,12 +43,15 @@ public class FinalizeTimeout
     {
         byte[] b;
         while (true)
+        {
             b = new byte[1024];
+            GC.KeepAlive(b);
+        }
     }
 
     private class BlockingFinalizerOnShutdown
     {
-        public static bool finalizerCompletedOnce = false;
+        public volatile static bool finalizerCompletedOnce = false;
         public bool isLastObject = false;
 
         ~BlockingFinalizerOnShutdown()
@@ -66,6 +72,7 @@ public class FinalizeTimeout
             do
             {
                 o = new object();
+                GC.KeepAlive(o);
             } while ((++i & 0xff) != 0 || (elapsed = DateTime.Now - start) < timeout);
 
             Console.WriteLine("Finalizer end");

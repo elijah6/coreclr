@@ -1,5 +1,6 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 #if !ES_BUILD_AGAINST_DOTNET_V35
 using Contract = System.Diagnostics.Contracts.Contract;
@@ -64,9 +65,9 @@ namespace System.Diagnostics.Tracing
         }
 
         // Anything not covered by the Scalar union gets stored in this reference.
-        readonly object _reference;
-        readonly Scalar _scalar;
-        readonly int _scalarLength;
+        private readonly object _reference;
+        private readonly Scalar _scalar;
+        private readonly int _scalarLength;
 
         private PropertyValue(object value)
         {
@@ -132,7 +133,7 @@ namespace System.Diagnostics.Tracing
         {
             get
             {
-                Contract.Assert(_scalarLength == 0, "This ReflectedValue refers to an unboxed value type, not a reference type or boxed value type.");
+                Debug.Assert(_scalarLength == 0, "This ReflectedValue refers to an unboxed value type, not a reference type or boxed value type.");
                 return _reference;
             }
         }
@@ -141,7 +142,7 @@ namespace System.Diagnostics.Tracing
         {
             get
             {
-                Contract.Assert(_scalarLength > 0, "This ReflectedValue refers to a reference type or boxed value type, not an unboxed value type");
+                Debug.Assert(_scalarLength > 0, "This ReflectedValue refers to a reference type or boxed value type, not an unboxed value type");
                 return _scalar;
             }
         }
@@ -150,7 +151,7 @@ namespace System.Diagnostics.Tracing
         {
             get
             {
-                Contract.Assert(_scalarLength > 0, "This ReflectedValue refers to a reference type or boxed value type, not an unboxed value type");
+                Debug.Assert(_scalarLength > 0, "This ReflectedValue refers to a reference type or boxed value type, not an unboxed value type");
                 return _scalarLength;
             }
         }

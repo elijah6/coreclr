@@ -18,32 +18,17 @@
 #ifndef __FieldMarshaler_h__
 #define __FieldMarshaler_h__
 
-#ifdef BINDER
-
-//TritonToDo: why don't we use the value from vm\<cpu>\cgencpu.h ??
-#if defined(_X86_) || defined(_ARM_)
-#define MAXFIELDMARSHALERSIZE 24
-#else
-#error "port field marshaler size"
-#endif
-
-typedef unsigned char U1;
-
-#else //BINDER
 #include "util.hpp"
 #include "mlinfo.h"
 #include "eeconfig.h"
 #include "olevariant.h"
-#endif // BINDER
 
 #ifdef FEATURE_COMINTEROP
 #endif  // FEATURE_COMINTEROP
 
-#ifndef BINDER
 #ifdef FEATURE_PREJIT
 #include "compile.h"
 #endif // FEATURE_PREJIT
-#endif // BINDER
 
 // Forward refernces
 class EEClassLayoutInfo;
@@ -100,7 +85,12 @@ enum NStructFieldType
 //=======================================================================
 // Magic number for default struct packing size.
 //=======================================================================
+#if defined(_TARGET_X86_) && defined(UNIX_X86_ABI)
+// A double is 4-byte aligned on GCC (without -malign-dobule)
+#define DEFAULT_PACKING_SIZE 4
+#else // _TARGET_X86_ && UNIX_X86_ABI
 #define DEFAULT_PACKING_SIZE 8
+#endif // !_TARGET_X86_ || !UNIX_X86_ABI
 
 
 //=======================================================================
@@ -276,11 +266,6 @@ VOID FmtValueTypeUpdateCLR(LPVOID pProtectedManagedData, MethodTable *pMT, BYTE 
 
 class FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
-
 public:
     VOID UpdateNative(OBJECTREF* pCLRValue, LPVOID pNativeValue, OBJECTREF *ppCleanupWorkListOnStack) const;
     VOID UpdateCLR(const VOID *pNativeValue, OBJECTREF *ppProtectedCLRValue, OBJECTREF *ppProtectedOldCLRValue) const;
@@ -361,11 +346,9 @@ public:
         }
         CONTRACTL_END;
 
-#ifndef BINDER
 #ifdef FEATURE_PREJIT
         Module::RestoreFieldDescPointer(&m_pFD);
 #endif // FEATURE_PREJIT
-#endif // BINDER
     }
 
     void SetFieldDesc(FieldDesc* pFD)
@@ -422,14 +405,12 @@ protected:
         }
         CONTRACTL_END;
 
-#ifndef BINDER
 #ifdef FEATURE_PREJIT
         Module::RestoreMethodTablePointer(ppMT);
 #else // FEATURE_PREJIT
         // without NGEN we only have to make sure that the type is fully loaded
         ClassLoader::EnsureLoaded(ppMT->GetValue());
 #endif // FEATURE_PREJIT
-#endif // BINDER
     }
 
 #ifdef _DEBUG
@@ -488,11 +469,6 @@ public:
 //=======================================================================
 class FieldMarshaler_Nullable : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
-
 public:
 
     FieldMarshaler_Nullable(MethodTable* pMT)
@@ -613,10 +589,6 @@ public:
 //=======================================================================
 class FieldMarshaler_NestedLayoutClass : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_NestedLayoutClass(MethodTable *pMT)
     {
@@ -691,10 +663,6 @@ private:
 //=======================================================================
 class FieldMarshaler_NestedValueClass : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_NestedValueClass(MethodTable *pMT)
     {
@@ -794,16 +762,25 @@ public:
     ELEMENT_SIZE_IMPL(sizeof(LPWSTR), sizeof(LPWSTR))
 };
 
+//=======================================================================
+// LPUTF8STR <--> System.String
+//=======================================================================
+class FieldMarshaler_StringUtf8 : public FieldMarshaler
+{
+public:
+
+	VOID UpdateNativeImpl(OBJECTREF* pCLRValue, LPVOID pNativeValue, OBJECTREF *ppCleanupWorkListOnStack) const;
+	VOID UpdateCLRImpl(const VOID *pNativeValue, OBJECTREF *ppProtectedCLRValue, OBJECTREF *ppProtectedOldCLRValue) const;
+	VOID DestroyNativeImpl(LPVOID pNativeValue) const;
+
+	ELEMENT_SIZE_IMPL(sizeof(LPSTR), sizeof(LPSTR))
+};
 
 //=======================================================================
 // LPSTR <--> System.String
 //=======================================================================
 class FieldMarshaler_StringAnsi : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_StringAnsi(BOOL BestFit, BOOL ThrowOnUnmappableChar) : 
         m_BestFitMap(!!BestFit), m_ThrowOnUnmappableChar(!!ThrowOnUnmappableChar)
@@ -840,10 +817,6 @@ private:
 //=======================================================================
 class FieldMarshaler_FixedStringUni : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     VOID UpdateNativeImpl(OBJECTREF* pCLRValue, LPVOID pNativeValue, OBJECTREF *ppCleanupWorkListOnStack) const;
     VOID UpdateCLRImpl(const VOID *pNativeValue, OBJECTREF *ppProtectedCLRValue, OBJECTREF *ppProtectedOldCLRValue) const;
@@ -867,10 +840,6 @@ private:
 //=======================================================================
 class FieldMarshaler_FixedStringAnsi : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_FixedStringAnsi(UINT32 numChar, BOOL BestFitMap, BOOL ThrowOnUnmappableChar) :
         m_numchar(numChar), m_BestFitMap(!!BestFitMap), m_ThrowOnUnmappableChar(!!ThrowOnUnmappableChar)
@@ -908,10 +877,6 @@ private:
 //=======================================================================
 class FieldMarshaler_FixedCharArrayAnsi : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_FixedCharArrayAnsi(UINT32 numElems, BOOL BestFit, BOOL ThrowOnUnmappableChar) :
         m_numElems(numElems), m_BestFitMap(!!BestFit), m_ThrowOnUnmappableChar(!!ThrowOnUnmappableChar)
@@ -949,10 +914,6 @@ private:
 //=======================================================================
 class FieldMarshaler_FixedArray : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_FixedArray(IMDInternalImport *pMDImport, mdTypeDef cl, UINT32 numElems, VARTYPE vt, MethodTable* pElementMT);
 
@@ -965,12 +926,8 @@ public:
     {
         LIMITED_METHOD_CONTRACT;
 
-#ifdef BINDER
-        return 0;
-#else
         MethodTable *pElementMT = m_arrayType.GetValue().AsArray()->GetArrayElementTypeHandle().GetMethodTable();
         return OleVariant::GetElementSizeForVarType(m_vt, pElementMT) * m_numElems;
-#endif
     }
 
     TypeHandle GetElementTypeHandle() const
@@ -1014,14 +971,12 @@ public:
         }
         CONTRACTL_END;
 
-#ifndef BINDER
 #ifdef FEATURE_PREJIT
         Module::RestoreTypeHandlePointer(&m_arrayType);
 #else // FEATURE_PREJIT
         // without NGEN we only have to make sure that the type is fully loaded
         ClassLoader::EnsureLoaded(m_arrayType.GetValue());
 #endif // FEATURE_PREJIT
-#endif
         FieldMarshaler::RestoreImpl();
     }
 
@@ -1053,10 +1008,6 @@ private:
 //=======================================================================
 class FieldMarshaler_SafeArray : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
 
     VOID UpdateNativeImpl(OBJECTREF* pCLRValue, LPVOID pNativeValue, OBJECTREF *ppCleanupWorkListOnStack) const;
@@ -1139,10 +1090,6 @@ private:
 //=======================================================================
 class FieldMarshaler_Delegate : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_Delegate(MethodTable* pMT)
     {
@@ -1246,10 +1193,6 @@ public:
 //=======================================================================
 class FieldMarshaler_Interface : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
 
     VOID UpdateNativeImpl(OBJECTREF* pCLRValue, LPVOID pNativeValue, OBJECTREF *ppCleanupWorkListOnStack) const;
@@ -1594,10 +1537,6 @@ public:
 
 class FieldMarshaler_Ansi : public FieldMarshaler
 {
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
     FieldMarshaler_Ansi(BOOL BestFitMap, BOOL ThrowOnUnmappableChar) :
         m_BestFitMap(!!BestFitMap), m_ThrowOnUnmappableChar(!!ThrowOnUnmappableChar)
@@ -1610,7 +1549,6 @@ public:
 
     SCALAR_MARSHALER_IMPL(sizeof(CHAR), sizeof(CHAR))
 
-#ifndef BINDER
     VOID ScalarUpdateNativeImpl(LPVOID pCLR, LPVOID pNative) const
     {
         CONTRACTL
@@ -1633,7 +1571,6 @@ public:
         
         *((char*)pNative) = c;
     }
-#endif
 
     VOID ScalarUpdateCLRImpl(const VOID *pNative, LPVOID pCLR) const
     {

@@ -42,7 +42,7 @@ Revision History:
 #endif // __APPLE__
 #include <errno.h>
 #if HAVE_COREFOUNDATION
-#include <corefoundation/corefoundation.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif // HAVE_COREFOUNDATION
 
 #include <debugmacrosext.h>
@@ -928,6 +928,10 @@ ReleaseString:
     {
         CFRelease(cfString);
     }
+#else /*HAVE_COREFOUNDATION */
+    ERROR( "This code page is not in the system.\n" );
+    SetLastError( ERROR_INVALID_PARAMETER );
+    goto EXIT;
 #endif /* HAVE_COREFOUNDATION */
 
 EXIT:
@@ -978,7 +982,6 @@ PAL_BindResources(IN LPCSTR lpDomain)
     }
     DWORD size = FILEGetDirectoryFromFullPathA(g_szCoreCLRPath, len, coreCLRDirectoryPath);
     coreCLRDirectoryPathPS.CloseBuffer(size);
-    _ASSERTE(size <= MAX_LONGPATH);
 
     LPCSTR boundPath = bindtextdomain(lpDomain, coreCLRDirectoryPath);
 

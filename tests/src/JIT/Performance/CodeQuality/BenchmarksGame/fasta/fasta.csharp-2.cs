@@ -1,3 +1,6 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /* The Computer Language Benchmarks Game
    http://benchmarksgame.alioth.debian.org/
 
@@ -15,6 +18,8 @@ using System.Text;
 [assembly: OptimizeForBenchmarks]
 [assembly: MeasureInstructionsRetired]
 
+namespace BenchmarksGame
+{
 public class Fasta
 {
 #if DEBUG
@@ -214,4 +219,5 @@ public class Fasta
         if (s_index != 0)
             s.Write(s_buf, 0, s_index);
     }
+}
 }

@@ -16,6 +16,7 @@ set(UTILCODE_COMMON_SOURCES
   makepath.cpp
   splitpath.cpp
   clrconfig.cpp
+  configuration.cpp
   collections.cpp
   posterror.cpp
   fstream.cpp
@@ -27,7 +28,6 @@ set(UTILCODE_COMMON_SOURCES
   peinformation.cpp
   check.cpp
   log.cpp
-  apithreadstress.cpp
   arraylist.cpp
   bitvector.cpp
   comex.cpp
@@ -40,7 +40,6 @@ set(UTILCODE_COMMON_SOURCES
   outstring.cpp
   ilformatter.cpp
   opinfo.cpp
-  dacutil.cpp
   sortversioning.cpp
   corimage.cpp
   format1.cpp
@@ -61,6 +60,7 @@ set(UTILCODE_COMMON_SOURCES
   pedecoder.cpp
   winfix.cpp
   longfilepathwrappers.cpp 
+  jithost.cpp
 )
 
 # These source file do not yet compile on Linux.
@@ -69,6 +69,7 @@ set(UTILCODE_COMMON_SOURCES
 if(WIN32)
   list(APPEND UTILCODE_COMMON_SOURCES 
     appxutil.cpp
+    dacutil.cpp
     dlwrap.cpp
     downlevel.cpp
     loadrc.cpp

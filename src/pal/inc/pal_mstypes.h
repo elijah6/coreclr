@@ -56,12 +56,6 @@ extern "C" {
 #define CDECL          __cdecl
 #endif
 
-#ifndef PAL_STDCPP_COMPAT
-#undef __fastcall
-#define __fastcall      __stdcall
-#undef _fastcall
-#define _fastcall       __fastcall
-#endif // PAL_STDCPP_COMPAT
 
 #else   // !defined(__i386__)
 
@@ -81,7 +75,7 @@ extern "C" {
 
 #endif  // !defined(__i386__)
 
-#define CALLBACK __stdcall
+#define CALLBACK __cdecl
 
 #if !defined(_declspec)
 #define _declspec(e)  __declspec(e)
@@ -111,7 +105,7 @@ extern "C" {
 
 #endif
 
-#define PALAPI      __stdcall
+#define PALAPI      __cdecl
 #define PALAPIV     __cdecl
 
 ////////////////////////////////////////////////////////////////////////
@@ -215,6 +209,9 @@ extern "C" {
 // Defined in gnu's types.h. For non PAL_IMPLEMENTATION system
 // includes are not included, so we need to define them.
 #ifndef PAL_IMPLEMENTATION
+
+// OS X already defines these types in 64 bit
+#if !defined(_TARGET_MAC64)
 typedef __int64 int64_t;
 typedef unsigned __int64 uint64_t;
 typedef __int32 int32_t;
@@ -223,6 +220,8 @@ typedef __int16 int16_t;
 typedef unsigned __int16 uint16_t;
 typedef __int8 int8_t;
 typedef unsigned __int8 uint8_t;
+#endif
+
 #endif // PAL_IMPLEMENTATION
 
 #ifndef _MSC_VER
@@ -236,13 +235,8 @@ typedef long double LONG_DOUBLE;
 
 typedef void VOID;
 
-#ifndef PLATFORM_UNIX
-typedef long LONG;
-typedef unsigned long ULONG;
-#else
 typedef int LONG;       // NOTE: diff from windows.h, for LP64 compat
 typedef unsigned int ULONG; // NOTE: diff from windows.h, for LP64 compat
-#endif
 
 typedef __int64 LONGLONG;
 typedef unsigned __int64 ULONGLONG;
@@ -261,12 +255,7 @@ typedef UCHAR *PUCHAR;
 typedef char *PSZ;
 typedef ULONGLONG DWORDLONG;
 
-#ifndef PLATFORM_UNIX
-typedef unsigned long DWORD;
-#else
 typedef unsigned int DWORD; // NOTE: diff from  windows.h, for LP64 compat
-#endif
-
 typedef unsigned int DWORD32, *PDWORD32;
 
 typedef int BOOL;
@@ -525,7 +514,9 @@ typedef _W64 unsigned __int32 DWORD_PTR, *PDWORD_PTR;
 /* maximum unsigned 32 bit value */
 #define ULONG_PTR_MAX     0xffffffffUL
 
+#ifndef SIZE_MAX
 #define SIZE_MAX UINT_MAX
+#endif
 
 #define __int3264   __int32
 
@@ -569,7 +560,7 @@ typedef LONG_PTR SSIZE_T, *PSSIZE_T;
 #endif
 
 #ifndef PAL_STDCPP_COMPAT
-#if defined(__APPLE_CC__) || defined(__LINUX__)
+#if defined(__APPLE_CC__) || defined(__linux__)
 #ifdef BIT64
 typedef unsigned long size_t;
 typedef long ptrdiff_t;
@@ -606,7 +597,7 @@ typedef char16_t WCHAR;
 #else // PAL_STDCPP_COMPAT
 
 typedef wchar_t WCHAR;
-#if defined(__LINUX__) 
+#if defined(__linux__) 
 #ifdef BIT64
 typedef long int intptr_t;
 typedef unsigned long int uintptr_t;

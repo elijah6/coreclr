@@ -18,11 +18,13 @@ Abstract:
 
 --*/
 
+#include "pal/dbgmsg.h"
+SET_DEFAULT_DEBUG_CHANNEL(LOADER); // some headers have code with asserts, so do this first
+
 #include "pal/thread.hpp"
 #include "pal/malloc.hpp"
 #include "pal/file.hpp"
 #include "pal/palinternal.h"
-#include "pal/dbgmsg.h"
 #include "pal/module.h"
 #include "pal/cs.hpp"
 #include "pal/process.h"
@@ -30,7 +32,7 @@ Abstract:
 #include "pal/utils.h"
 #include "pal/init.h"
 #include "pal/modulename.h"
-#include "pal/misc.h"
+#include "pal/environ.h"
 #include "pal/virtual.h"
 #include "pal/map.hpp"
 #include "pal/stackstring.hpp"
@@ -54,13 +56,11 @@ Abstract:
 #include <sys/types.h>
 #include <sys/mman.h>
 
-#if defined(__LINUX__)
+#if HAVE_GNU_LIBNAMES_H
 #include <gnu/lib-names.h>
 #endif
 
 using namespace CorUnix;
-
-SET_DEFAULT_DEBUG_CHANNEL(LOADER);
 
 // In safemath.h, Template SafeInt uses macro _ASSERTE, which need to use variable
 // defdbgchan defined by SET_DEFAULT_DEBUG_CHANNEL. Therefore, the include statement
@@ -91,7 +91,6 @@ MODSTRUCT exe_module;
 MODSTRUCT *pal_module = nullptr;
 
 char * g_szCoreCLRPath = nullptr;
-size_t g_cbszCoreCLRPath = MAX_LONGPATH * sizeof(char);
 
 int MaxWCharToAcpLength = 3;
 
@@ -190,7 +189,7 @@ LoadLibraryExA(
  Done:
     if (lpstr != nullptr)
     {
-        InternalFree(lpstr);
+        free(lpstr);
     }
 
     LOGEXIT("LoadLibraryExA returns HMODULE %p\n", hModule);
@@ -745,12 +744,17 @@ PAL_LOADLoadPEFile(HANDLE hFile)
 #ifdef _DEBUG
     if (loadedBase != nullptr)
     {
-        char* envVar = getenv("PAL_ForcePEMapFailure");
-        if (envVar && strlen(envVar) > 0)
+        char* envVar = EnvironGetenv("PAL_ForcePEMapFailure");
+        if (envVar)
         {
-            TRACE("Forcing failure of PE file map, and retry\n");
-            PAL_LOADUnloadPEFile(loadedBase); // unload it
-            loadedBase = MAPMapPEFile(hFile); // load it again
+            if (strlen(envVar) > 0)
+            {
+                TRACE("Forcing failure of PE file map, and retry\n");
+                PAL_LOADUnloadPEFile(loadedBase); // unload it
+                loadedBase = MAPMapPEFile(hFile); // load it again
+            }
+
+            free(envVar);
         }
     }
 #endif // _DEBUG
@@ -904,7 +908,7 @@ BOOL LOADSetExeName(LPWSTR name)
     LockModuleList();
 
     // Save the exe path in the exe module struct
-    InternalFree(exe_module.lib_name);
+    free(exe_module.lib_name);
     exe_module.lib_name = name;
 
     // For platforms where we can't trust the handle to be constant, we need to 
@@ -935,7 +939,7 @@ BOOL LOADSetExeName(LPWSTR name)
 exit:
     if (pszExeName)
     {
-        InternalFree(pszExeName);
+        free(pszExeName);
     }
 #endif
     UnlockModuleList();
@@ -1107,8 +1111,8 @@ static BOOL LOADFreeLibrary(MODSTRUCT *module, BOOL fCallDllMain)
     }
 
     /* release all memory */
-    InternalFree(module->lib_name);
-    InternalFree(module);
+    free(module->lib_name);
+    free(module);
 
     retval = TRUE;
 
@@ -1265,14 +1269,9 @@ static bool LOADConvertLibraryPathWideStringToMultibyteString(
     if (*multibyteLibraryPathLengthRef == 0)
     {
         DWORD dwLastError = GetLastError();
-        if (dwLastError == ERROR_INSUFFICIENT_BUFFER)
-        {
-            ERROR("wideLibraryPath converted to a multibyte string is longer than MAX_LONGPATH (%d)!\n", MAX_LONGPATH);
-        }
-        else
-        {
-            ASSERT("WideCharToMultiByte failure! error is %d\n", dwLastError);
-        }
+        
+        ASSERT("WideCharToMultiByte failure! error is %d\n", dwLastError);
+        
         SetLastError(ERROR_INVALID_PARAMETER);
         return false;
     }
@@ -1424,7 +1423,7 @@ static MODSTRUCT *LOADAllocModule(void *dl_handle, LPCSTR name)
     if (nullptr == wide_name)
     {
         ERROR("couldn't convert name to a wide-character string\n");
-        InternalFree(module);
+        free(module);
         return nullptr;
     }
 
@@ -1608,21 +1607,25 @@ static HMODULE LOADLoadLibrary(LPCSTR shortAsciiName, BOOL fDynamic)
     HMODULE module = nullptr;
     void *dl_handle = nullptr;
 
-    // Check whether we have been requested to load 'libc'. If that's the case then use the
-    // full name of the library that is defined in <gnu/lib-names.h> by the LIBC_SO constant.
-    // The problem is that calling dlopen("libc.so") will fail for libc even thought it works
-    // for other libraries. The reason is that libc.so is just linker script (i.e. a test file).
-    // As a result, we have to use the full name (i.e. lib.so.6) that is defined by LIBC_SO.
+    // Check whether we have been requested to load 'libc'. If that's the case, then:
+    // * For Linux, use the full name of the library that is defined in <gnu/lib-names.h> by the
+    //   LIBC_SO constant. The problem is that calling dlopen("libc.so") will fail for libc even
+    //   though it works for other libraries. The reason is that libc.so is just linker script
+    //   (i.e. a test file).
+    //   As a result, we have to use the full name (i.e. lib.so.6) that is defined by LIBC_SO.
+    // * For macOS, use constant value absolute path "/usr/lib/libc.dylib".
+    // * For FreeBSD, use constant value "libc.so.7".
+    // * For rest of Unices, use constant value "libc.so".
     if (strcmp(shortAsciiName, LIBC_NAME_WITHOUT_EXTENSION) == 0)
     {
 #if defined(__APPLE__)
-        shortAsciiName = "libc.dylib";
+        shortAsciiName = "/usr/lib/libc.dylib";
 #elif defined(__FreeBSD__)
-        shortAsciiName = FREEBSD_LIBC;
-#elif defined(__NetBSD__)
-        shortAsciiName = "libc.so";
-#else
+        shortAsciiName = "libc.so.7";
+#elif defined(LIBC_SO)
         shortAsciiName = LIBC_SO;
+#else
+        shortAsciiName = "libc.so";
 #endif
     }
 
@@ -1700,20 +1703,22 @@ MODSTRUCT *LOADGetPalLibrary()
         // Make sure it's terminated with a slash.
         if (g_szCoreCLRPath == nullptr)
         {
-            g_szCoreCLRPath = (char*) InternalMalloc(g_cbszCoreCLRPath);
+            size_t  cbszCoreCLRPath = strlen(info.dli_fname) + 1;
+            g_szCoreCLRPath = (char*) InternalMalloc(cbszCoreCLRPath);
 
             if (g_szCoreCLRPath == nullptr)
             {
                 ERROR("LOADGetPalLibrary: InternalMalloc failed!");
                 goto exit;
             }
+
+            if (strcpy_s(g_szCoreCLRPath, cbszCoreCLRPath, info.dli_fname) != SAFECRT_SUCCESS)
+            {
+                ERROR("LOADGetPalLibrary: strcpy_s failed!");
+                goto exit;
+            }
         }
         
-        if (strcpy_s(g_szCoreCLRPath, g_cbszCoreCLRPath, info.dli_fname) != SAFECRT_SUCCESS)
-        {
-            ERROR("LOADGetPalLibrary: strcpy_s failed!");
-            goto exit;
-        }
         pal_module = (MODSTRUCT *)LOADLoadLibrary(info.dli_fname, FALSE);
     }
 

@@ -1,9 +1,12 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /* The Computer Language Benchmarks Game
  * http://benchmarksgame.alioth.debian.org/
  *
  * Port of the C code that uses GMP
  * Just switched it to use C#'s BigInteger instead
- * 
+ *
  * To compile use csc /o+ /r:System.Numerics.dll
  *
  * modified for use with xunit-performance
@@ -17,6 +20,8 @@ using System.Text;
 [assembly: OptimizeForBenchmarks]
 [assembly: MeasureInstructionsRetired]
 
+namespace BenchmarksGame
+{
 public class pidigits
 {
 #if DEBUG
@@ -107,5 +112,6 @@ public class pidigits
             }
         }
     }
+}
 }
 

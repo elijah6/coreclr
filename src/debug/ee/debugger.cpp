@@ -18,9 +18,6 @@
 #include "eeconfig.h" // This is here even for retail & free builds...
 #include "../../dlls/mscorrc/resource.h"
 
-#ifdef FEATURE_REMOTING
-#include "remoting.h"
-#endif
 
 #include "context.h"
 #include "vars.hpp"
@@ -43,9 +40,7 @@
 #include "datatest.h"
 #endif // TEST_DATA_CONSISTENCY
 
-#if defined(FEATURE_CORECLR)
 #include "dbgenginemetrics.h"
-#endif // FEATURE_CORECLR
 
 #include "../../vm/rejit.h"
 
@@ -75,6 +70,9 @@ SVAL_IMPL_INIT(BOOL, Debugger, s_fCanChangeNgenFlags, TRUE);
 
 bool g_EnableSIS = false;
 
+// The following instances are used for invoking overloaded new/delete
+InteropSafe interopsafe;
+InteropSafeExecutable interopsafeEXEC;
 
 #ifndef DACCESS_COMPILE
 
@@ -276,20 +274,6 @@ bool IsGuardPageGone()
     bool fGuardPageGone = (pThread->DetermineIfGuardPagePresent() == FALSE);
     LOG((LF_CORDB, LL_INFO1000000, "D::IsGuardPageGone=%d\n", fGuardPageGone));
     return fGuardPageGone;
-}
-
-
-// This is called from AppDomainEnumerationIPCBlock::Lock and Unlock
-void BeginThreadAffinityHelper()
-{
-    WRAPPER_NO_CONTRACT;
-
-    Thread::BeginThreadAffinity();
-}
-void EndThreadAffinityHelper()
-{
-    WRAPPER_NO_CONTRACT;
-    Thread::EndThreadAffinity();
 }
 
 //-----------------------------------------------------------------------------
@@ -594,8 +578,8 @@ void DoAssertOnType(DebuggerIPCEventType event, int count)
         if (g_iDbgRuntimeCounter[event & 0x00ff] == count)
         {
             char        tmpStr[256];
-            sprintf(tmpStr, "%s == %d, break now!",
-                     IPCENames::GetName(event), count);
+            _snprintf_s(tmpStr, _countof(tmpStr), _TRUNCATE, "%s == %d, break now!",
+                        IPCENames::GetName(event), count);
 
             // fire the assertion
             DbgAssertDialog(__FILE__, __LINE__, tmpStr);
@@ -608,8 +592,8 @@ void DoAssertOnType(DebuggerIPCEventType event, int count)
         if (g_iDbgDebuggerCounter[event & 0x00ff] == count)
         {
             char        tmpStr[256];
-            sprintf(tmpStr, "%s == %d, break now!",
-                     IPCENames::GetName(event), count);
+            _snprintf_s(tmpStr, _countof(tmpStr), _TRUNCATE, "%s == %d, break now!",
+                        IPCENames::GetName(event), count);
 
             // fire the assertion
             DbgAssertDialog(__FILE__, __LINE__, tmpStr);
@@ -983,6 +967,7 @@ Debugger::Debugger()
 
     m_fShutdownMode = false;
     m_fDisabled = false;
+    m_rgHijackFunction = NULL;
 
 #ifdef _DEBUG
     InitDebugEventCounting();
@@ -1462,7 +1447,7 @@ DebuggerEval::DebuggerEval(CONTEXT * pContext, DebuggerIPCE_FuncEvalInfo * pEval
     m_genericArgsNodeCount = pEvalInfo->genericArgsNodeCount;
     m_successful = false;
     m_argData = NULL;
-    m_result = 0;
+    memset(m_result, 0, sizeof(m_result));
     m_md = NULL;
     m_resultType = TypeHandle();
     m_aborting = FE_ABORT_NONE;
@@ -1518,7 +1503,7 @@ DebuggerEval::DebuggerEval(CONTEXT * pContext, Thread * pThread, Thread::ThreadA
     m_successful = false;
     m_argData = NULL;
     m_targetCodeAddr = NULL;
-    m_result = 0;
+    memset(m_result, 0, sizeof(m_result));
     m_md = NULL;
     m_resultType = TypeHandle();
     m_aborting = FE_ABORT_NONE;
@@ -1892,9 +1877,9 @@ void Debugger::SendCreateProcess(DebuggerLockHolder * pDbgLockHolder)
     pDbgLockHolder->Acquire();
 }
 
-#if defined(FEATURE_CORECLR) && !defined(FEATURE_PAL)
+#if !defined(FEATURE_PAL)
 
-HANDLE g_hContinueStartupEvent = NULL;
+HANDLE g_hContinueStartupEvent = INVALID_HANDLE_VALUE;
 
 CLR_ENGINE_METRICS g_CLREngineMetrics = {
     sizeof(CLR_ENGINE_METRICS), 
@@ -1941,7 +1926,7 @@ void NotifyDebuggerOfTelestoStartup()
     // enumeration of this process will get back a valid continue event
     // the instant we signal the startup notification event.
 
-    CONSISTENCY_CHECK(NULL == g_hContinueStartupEvent);
+    CONSISTENCY_CHECK(INVALID_HANDLE_VALUE == g_hContinueStartupEvent);
     g_hContinueStartupEvent = WszCreateEvent(NULL, TRUE, FALSE, NULL);
     CONSISTENCY_CHECK(INVALID_HANDLE_VALUE != g_hContinueStartupEvent); // we reserve this value for error conditions in EnumerateCLRs
 
@@ -1962,7 +1947,7 @@ void NotifyDebuggerOfTelestoStartup()
     g_hContinueStartupEvent = NULL;
 }
 
-#endif // FEATURE_CORECLR && !FEATURE_PAL
+#endif // !FEATURE_PAL
 
 //---------------------------------------------------------------------------------------
 //
@@ -1995,7 +1980,7 @@ HRESULT Debugger::Startup(void)
 
     _ASSERTE(g_pEEInterface != NULL);
 
-#if defined(FEATURE_CORECLR) && !defined(FEATURE_PAL)
+#if !defined(FEATURE_PAL)
     if (IsWatsonEnabled() || IsTelestoDebugPackInstalled())
     {
         // Iff the debug pack is installed, then go through the telesto debugging pipeline.
@@ -2014,7 +1999,7 @@ HRESULT Debugger::Startup(void)
         // The transport requires the debug pack to be present.  Otherwise it'll raise a fatal error.
         return S_FALSE;
     }
-#endif // FEATURE_CORECLR && !FEATURE_PAL
+#endif // !FEATURE_PAL
 
     {
         DebuggerLockHolder dbgLockHolder(this);
@@ -2112,18 +2097,9 @@ HRESULT Debugger::Startup(void)
             ShutdownTransport();
             ThrowHR(hr);
         }
-
     #ifdef FEATURE_PAL
         PAL_SetShutdownCallback(AbortTransport);
     #endif // FEATURE_PAL
-
-         bool waitForAttach = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgWaitForDebuggerAttach) != 0;
-         if (waitForAttach)
-         {
-             // Mark this process as launched by the debugger and the debugger as attached.
-             g_CORDebuggerControlFlags |= DBCF_GENERATE_DEBUG_CODE;
-             MarkDebuggerAttachedInternal();
-         }
     #endif // FEATURE_DBGIPC_TRANSPORT_VM
 
         RaiseStartupNotification();
@@ -2178,7 +2154,14 @@ HRESULT Debugger::Startup(void)
     // Signal the debugger (via dbgshim) and wait until it is ready for us to 
     // continue. This needs to be outside the lock and after the transport is
     // initialized.
-    PAL_NotifyRuntimeStarted();
+    if (PAL_NotifyRuntimeStarted())
+    {
+        // The runtime was successfully launched and attached so mark it now
+        // so no notifications are missed especially the initial module load 
+        // which would cause debuggers problems with reliable setting breakpoints 
+        // in startup code or Main.
+       MarkDebuggerAttachedInternal();
+    }
 #endif // FEATURE_PAL
 
     // We don't bother changing this process's permission.
@@ -5198,39 +5181,6 @@ HRESULT Debugger::MapPatchToDJI( DebuggerControllerPatch *dcp,DebuggerJitInfo *d
     return S_OK;
 }
 
-//
-// Wrapper function for debugger to WaitForSingleObject. If CLR is hosted,
-// notify host before we leave runtime.
-//
-DWORD  Debugger::WaitForSingleObjectHelper(HANDLE handle, DWORD dwMilliseconds)
-{
-    CONTRACTL
-    {
-        SO_NOT_MAINLINE;
-        NOTHROW;
-        GC_NOTRIGGER;
-    }
-    CONTRACTL_END;
-
-    DWORD   dw = 0;
-    EX_TRY
-    {
-
-        // make sure that we let host know that we are leaving runtime.
-        LeaveRuntimeHolder holder((size_t)(::WaitForSingleObject));
-        dw = ::WaitForSingleObject(handle,dwMilliseconds);
-    }
-    EX_CATCH
-    {
-        // Only possibility to enter here is when Thread::LeaveRuntime
-        // throws exception.
-        dw = WAIT_ABANDONED;
-    }
-    EX_END_CATCH(SwallowAllExceptions);
-    return dw;
-
-}
-
 
 /* ------------------------------------------------------------------------ *
  * EE Interface routines
@@ -8137,8 +8087,7 @@ LONG Debugger::NotifyOfCHFFilter(EXCEPTION_POINTERS* pExceptionPointers, PVOID p
     pExState->GetFlags()->SetDebugCatchHandlerFound();
 
 #ifdef DEBUGGING_SUPPORTED
-
-
+#ifdef DEBUGGER_EXCEPTION_INTERCEPTION_SUPPORTED
     if ( (pThread != NULL) &&
          (pThread->IsExceptionInProgress()) &&
          (pThread->GetExceptionState()->GetFlags()->DebuggerInterceptInfo()) )
@@ -8149,6 +8098,7 @@ LONG Debugger::NotifyOfCHFFilter(EXCEPTION_POINTERS* pExceptionPointers, PVOID p
         //
         ClrDebuggerDoUnwindAndIntercept(X86_FIRST_ARG(EXCEPTION_CHAIN_END) pExceptionPointers->ExceptionRecord);
     }
+#endif // DEBUGGER_EXCEPTION_INTERCEPTION_SUPPORTED
 #endif // DEBUGGING_SUPPORTED
 
     return EXCEPTION_CONTINUE_SEARCH;
@@ -8388,7 +8338,7 @@ FramePointer GetHandlerFramePointer(BYTE *pStack)
 {
     FramePointer handlerFP;
 
-#if !defined(_TARGET_ARM_)
+#if !defined(_TARGET_ARM_) && !defined(_TARGET_ARM64_) 
     // Refer to the comment in DispatchUnwind() to see why we have to add
     // sizeof(LPVOID) to the handler ebp.
     handlerFP = FramePointer::MakeFramePointer(LPVOID(pStack + sizeof(void*)));
@@ -9587,23 +9537,6 @@ void Debugger::LoadModule(Module* pRuntimeModule,
     SENDIPCEVENT_BEGIN(this, pThread);
 
 
-#ifdef FEATURE_FUSION
-    // Fix for issue Whidbey - 106398
-    // Populate the pdb to fusion cache.
-
-    //
-    if (pRuntimeModule->IsIStream() == FALSE)
-    {
-        SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE;
-
-        HRESULT hrCopy = S_OK;
-        EX_TRY
-        {
-            pRuntimeModule->FusionCopyPDBs(pRuntimeModule->GetPath());
-        }
-        EX_CATCH_HRESULT(hrCopy); // ignore failures
-    }
-#endif // FEATURE_FUSION
 
     DebuggerIPCEvent* ipce = NULL;
 
@@ -9802,7 +9735,6 @@ void Debugger::LoadModuleFinished(Module * pRuntimeModule, AppDomain * pAppDomai
 //   Use code:Debugger.SendUpdateModuleSymsEventAndBlock for that.
 void Debugger::SendRawUpdateModuleSymsEvent(Module *pRuntimeModule, AppDomain *pAppDomain)
 {
-// @telest - do we need an #ifdef FEATURE_FUSION here?
     CONTRACTL
     {
         NOTHROW;
@@ -10361,7 +10293,7 @@ void Debugger::FuncEvalComplete(Thread* pThread, DebuggerEval *pDE)
     if (CORDBUnrecoverableError(this))
         return;
 
-    LOG((LF_CORDB, LL_INFO10000, "D::FEC: func eval complete pDE:%08x evalType:%d %s %s\n",
+    LOG((LF_CORDB, LL_INFO1000, "D::FEC: func eval complete pDE:%p evalType:%d %s %s\n",
         pDE, pDE->m_evalType, pDE->m_successful ? "Success" : "Fail", pDE->m_aborted ? "Abort" : "Completed"));
 
 
@@ -10394,11 +10326,11 @@ void Debugger::FuncEvalComplete(Thread* pThread, DebuggerEval *pDE)
     ipce->FuncEvalComplete.funcEvalKey = pDE->m_funcEvalKey;
     ipce->FuncEvalComplete.successful = pDE->m_successful;
     ipce->FuncEvalComplete.aborted = pDE->m_aborted;
-    ipce->FuncEvalComplete.resultAddr = &(pDE->m_result);
+    ipce->FuncEvalComplete.resultAddr = pDE->m_result;
     ipce->FuncEvalComplete.vmAppDomain.SetRawPtr(pResultDomain);
     ipce->FuncEvalComplete.vmObjectHandle = pDE->m_vmObjectHandle;
 
-    LOG((LF_CORDB, LL_INFO10000, "D::FEC: TypeHandle is :%08x\n", pDE->m_resultType.AsPtr()));
+    LOG((LF_CORDB, LL_INFO1000, "D::FEC: TypeHandle is %p\n", pDE->m_resultType.AsPtr()));
 
     Debugger::TypeHandleToExpandedTypeInfo(pDE->m_retValueBoxing, // whether return values get boxed or not depends on the particular FuncEval we're doing...
                                            pResultDomain,
@@ -10407,11 +10339,12 @@ void Debugger::FuncEvalComplete(Thread* pThread, DebuggerEval *pDE)
 
     _ASSERTE(ipce->FuncEvalComplete.resultType.elementType != ELEMENT_TYPE_VALUETYPE);
 
-    LOG((LF_CORDB, LL_INFO10000, "D::FEC: returned from call\n"));
-
     // We must adjust the result address to point to the right place
     ipce->FuncEvalComplete.resultAddr = ArgSlotEndianessFixup((ARG_SLOT*)ipce->FuncEvalComplete.resultAddr, 
         GetSizeForCorElementType(ipce->FuncEvalComplete.resultType.elementType));
+
+    LOG((LF_CORDB, LL_INFO1000, "D::FEC: returned el %04x resultAddr %p\n", 
+        ipce->FuncEvalComplete.resultType.elementType, ipce->FuncEvalComplete.resultAddr));
 
     m_pRCThread->SendIPCEvent();
 
@@ -10584,64 +10517,6 @@ BYTE* Debugger::SerializeModuleMetaData(Module * pModule, DWORD * countBytes)
     LOG((LF_CORDB, LL_INFO10000, "Debugger::SMMD exiting\n"));
     return metadataBuffer;
 }
-
-#ifdef FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
-//---------------------------------------------------------------------------------------
-//
-// Called on the helper thread to send a pause notification to the host
-//
-//
-//    This is called on the helper-thread, or a thread pretending to be the helper-thread.
-//    The debuggee should be synchronized. This callback to the host is only supported
-//    on Windows Phone as a replacement for some legacy NetCF behavior. In general I don't
-//    like being the transport between the VS debugger and the host, so don't use
-//    this as precedent that we should start making more callbacks for them. In the future
-//    the debugger and host should make alternative arrangements such as window messages,
-//    out of proc event signaling, or any other IPC mechanism.
-//
-//    This should be deprecated as soon as mixed-mode debugging is available. The 
-//    end goal on phone is to pause the UI thread while VS is in the break state. That
-//    will be accomplished by a mixed-mode debugger suspending all native threads when
-//    it breaks rather than having us send a special message.
-//
-//---------------------------------------------------------------------------------------
-VOID Debugger::InvokeLegacyNetCFHostPauseCallback()
-{
-    IHostNetCFDebugControlManager* pHostCallback = CorHost2::GetHostNetCFDebugControlManager();
-    if(pHostCallback != NULL)
-    {
-        pHostCallback->NotifyPause(0);
-    }
-}
-
-//---------------------------------------------------------------------------------------
-//
-// Called on the helper thread to send a resume notification to the host
-//
-//
-//    This is called on the helper-thread, or a thread pretending to be the helper-thread.
-//    The debuggee should be synchronized. This callback to the host is only supported
-//    on Windows Phone as a replacement for some legacy NetCF behavior. In general I don't
-//    like being the transport between the VS debugger and the host, so don't use
-//    this as precedent that we should start making more callbacks for them. In the future
-//    the debugger and host should make alternative arrangements such as window messages,
-//    out of proc event signaling, or any other IPC mechanism.
-//
-//    This should be deprecated as soon as mixed-mode debugging is available. The 
-//    end goal on phone is to pause the UI thread while VS is in the break state. That
-//    will be accomplished by a mixed-mode debugger suspending all native threads when
-//    it breaks rather than having us send a special message.
-//
-//---------------------------------------------------------------------------------------
-VOID Debugger::InvokeLegacyNetCFHostResumeCallback()
-{
-    IHostNetCFDebugControlManager* pHostCallback = CorHost2::GetHostNetCFDebugControlManager();
-    if(pHostCallback != NULL)
-    {
-        pHostCallback->NotifyResume(0);
-    }
-}
-#endif //FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
 
 //---------------------------------------------------------------------------------------
 //
@@ -11716,34 +11591,6 @@ bool Debugger::HandleIPCEvent(DebuggerIPCEvent * pEvent)
 
         break;
 
-#ifdef FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
-    case DB_IPCE_NETCF_HOST_CONTROL_PAUSE:
-        {
-            LOG((LF_CORDB, LL_INFO10000, "D::HIPCE Handling DB_IPCE_NETCF_HOST_CONTROL_PAUSE\n"));
-            InvokeLegacyNetCFHostPauseCallback();
-
-            DebuggerIPCEvent * pResult = m_pRCThread->GetIPCEventReceiveBuffer();
-            InitIPCEvent(pResult, DB_IPCE_NETCF_HOST_CONTROL_PAUSE_RESULT, NULL, NULL);
-            pResult->hr = S_OK;
-            m_pRCThread->SendIPCReply();
-        }
-
-        break;
-
-    case DB_IPCE_NETCF_HOST_CONTROL_RESUME:
-        {
-            LOG((LF_CORDB, LL_INFO10000, "D::HIPCE Handling DB_IPCE_NETCF_HOST_CONTROL_RESUME\n"));
-            InvokeLegacyNetCFHostResumeCallback();
-
-            DebuggerIPCEvent * pResult = m_pRCThread->GetIPCEventReceiveBuffer();
-            InitIPCEvent(pResult, DB_IPCE_NETCF_HOST_CONTROL_RESUME_RESULT, NULL, NULL);
-            pResult->hr = S_OK;
-            m_pRCThread->SendIPCReply();
-        }
-
-        break;
-#endif // FEATURE_LEGACYNETCF_DBG_HOST_CONTROL
-
     default:
         // We should never get an event that we don't know about.
         CONSISTENCY_CHECK_MSGF(false, ("Unknown Debug-Event on LS:id=0x%08x.", pEvent->type));
@@ -11982,7 +11829,7 @@ HRESULT Debugger::GetAndSendInterceptCommand(DebuggerIPCEvent *event)
                                                               csi.m_activeFrame.MethodToken,
                                                               csi.m_activeFrame.md,
                                                               foundOffset,
-#ifdef _TARGET_ARM_
+#if defined (_TARGET_ARM_ )|| defined (_TARGET_ARM64_ )
                                                               // ARM requires the caller stack pointer, not the current stack pointer
                                                               CallerStackFrame::FromRegDisplay(&(csi.m_activeFrame.registers)),
 #else
@@ -12000,7 +11847,7 @@ HRESULT Debugger::GetAndSendInterceptCommand(DebuggerIPCEvent *event)
 
                             //
                             // Save off this breakpoint, so that if the exception gets unwound before we hit
-                            // the breakpoint - the exeception info can call back to remove it.
+                            // the breakpoint - the exception info can call back to remove it.
                             //
                             pExState->GetDebuggerState()->SetDebuggerInterceptContext((void *)pBreakpoint);
 
@@ -12823,27 +12670,13 @@ CorDebugUserState Debugger::GetFullUserState(Thread *pThread)
 /******************************************************************************
  *
  * Helper for debugger to get an unique thread id
- * If we are not in Fiber mode, we can safely use OSThreadId
- * Otherwise, we will use our own unique ID.
- *
- * We will return our unique ID when our host is hosting Thread.
- *
  *
  ******************************************************************************/
 DWORD Debugger::GetThreadIdHelper(Thread *pThread)
 {
     WRAPPER_NO_CONTRACT;
 
-    if (!CLRTaskHosted())
-    {
-        // use the plain old OS Thread ID
-        return pThread->GetOSThreadId();
-    }
-    else
-    {
-        // use our unique thread ID
-        return pThread->GetThreadId();
-    }
+    return pThread->GetOSThreadId();
 }
 
 //-----------------------------------------------------------------------------
@@ -13587,7 +13420,17 @@ ExceptionHijackPersonalityRoutine(IN     PEXCEPTION_RECORD   pExceptionRecord
     CONTEXT * pHijackContext = NULL;
 
     // Get the 1st parameter (the Context) from hijack worker.
-    pHijackContext = *reinterpret_cast<CONTEXT **>(pDispatcherContext->EstablisherFrame);
+    // EstablisherFrame points to the stack slot 8 bytes above the
+    // return address to the ExceptionHijack. This would contain the
+    // parameters passed to ExceptionHijackWorker, which is marked
+    // STDCALL, but the x64 calling convention lets the
+    // ExceptionHijackWorker use that stack space, resulting in the
+    // context being overwritten. Instead, we get the context from the
+    // previous stack frame, which contains the arguments to
+    // ExceptionHijack, placed there by the debugger in
+    // DacDbiInterfaceImpl::Hijack. This works because ExceptionHijack
+    // allocates exactly 4 stack slots.
+    pHijackContext = *reinterpret_cast<CONTEXT **>(pDispatcherContext->EstablisherFrame + 0x20);
     
     // This copies pHijackContext into pDispatcherContext, which the OS can then
     // use to walk the stack.
@@ -15037,21 +14880,6 @@ HRESULT Debugger::CopyModulePdb(Module* pRuntimeModule)
     }
 
     HRESULT hr = S_OK;
-#ifdef FEATURE_FUSION
-    //
-    // Populate the pdb to fusion cache.
-    //
-    if (pRuntimeModule->IsIStream() == FALSE)
-    {
-        SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE;
-        
-        EX_TRY
-        {
-            pRuntimeModule->FusionCopyPDBs(pRuntimeModule->GetPath());
-        }
-        EX_CATCH_HRESULT(hr); // ignore failures
-    }
-#endif // FEATURE_FUSION
 
     return hr;
 }
@@ -15173,15 +15001,6 @@ HRESULT Debugger::InitAppDomainIPC(void)
     // If we throw, before fully initializing this, then cleanup won't try to free
     // uninited values.
     ZeroMemory(m_pAppDomainCB, sizeof(*m_pAppDomainCB));
-
-    // Fix for issue: whidbey 143061
-    // We are creating the mutex as hold, when we unlock, the EndThreadAffinity in
-    // hosting case will be unbalanced.
-    // Ideally, I would like to fix this by creating mutex not-held and call Lock method.
-    // This way, when we clean up the OOM, (as you can tell, we never release the mutex in
-    // some error cases), we can change it to holder class.
-    //
-    Thread::BeginThreadAffinity();
 
     // Create a mutex to allow the Left and Right Sides to properly
     // synchronize. The Right Side will spin until m_hMutex is valid,
@@ -15443,6 +15262,8 @@ HRESULT Debugger::FuncEvalSetup(DebuggerIPCE_FuncEvalInfo *pEvalInfo,
 #endif // !UNIX_AMD64_ABI
 #elif defined(_TARGET_ARM_)
         filterContext->R0 = (DWORD)pDE;
+#elif defined(_TARGET_ARM64_)
+        filterContext->X0 = (SIZE_T)pDE;
 #else
         PORTABILITY_ASSERT("Debugger::FuncEvalSetup is not implemented on this platform.");
 #endif
@@ -15537,6 +15358,8 @@ HRESULT Debugger::FuncEvalSetupReAbort(Thread *pThread, Thread::ThreadAbortReque
     filterContext->Rcx = (SIZE_T)pDE;
 #elif defined(_TARGET_ARM_)
     filterContext->R0 = (DWORD)pDE;
+#elif defined(_TARGET_ARM64_)
+    filterContext->X0 = (SIZE_T)pDE;
 #else
     PORTABILITY_ASSERT("FuncEvalSetupReAbort (Debugger.cpp) is not implemented on this platform.");
 #endif
@@ -16164,7 +15987,7 @@ BOOL Debugger::SendCtrlCToDebugger(DWORD dwCtrlType)
 
     // now wait for notification from the right side about whether or not
     // the out-of-proc debugger is handling ControlC events.
-    WaitForSingleObjectHelper(GetCtrlCMutex(), INFINITE);
+    ::WaitForSingleObject(GetCtrlCMutex(), INFINITE);
 
     return GetDebuggerHandlingCtrlC();
 }
@@ -17092,6 +16915,7 @@ Debugger::EnumMemoryRegions(CLRDataEnumMemoryFlags flags)
 {
     DAC_ENUM_VTHIS();
     SUPPORTS_DAC;
+    _ASSERTE(m_rgHijackFunction != NULL);
 
     if ( flags != CLRDATA_ENUM_MEM_TRIAGE)
     {

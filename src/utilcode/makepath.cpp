@@ -15,14 +15,15 @@
 #include "utilcode.h"
 #include "ex.h"
 
+
 /***
-*void _makepath() - build path name from components
+*void Makepath() - build path name from components
 *
 *Purpose:
 *       create a path name from its individual components
 *
 *Entry:
-*       WCHAR *path  - pointer to buffer for constructed path
+*       CQuickWSTR &szPath - Buffer for constructed path
 *       WCHAR *drive - pointer to drive component, may or may not contain
 *                     trailing ':'
 *       WCHAR *dir   - pointer to subdirectory component, may or may not include
@@ -39,7 +40,7 @@
 *******************************************************************************/
 
 void MakePath (
-        __out_ecount (MAX_LONGPATH) WCHAR *path,
+        __out CQuickWSTR &szPath,
         __in LPCWSTR drive,
         __in LPCWSTR dir,
         __in LPCWSTR fname,
@@ -50,9 +51,15 @@ void MakePath (
         {
             NOTHROW;
             GC_NOTRIGGER;
-            FORBID_FAULT;
         }
         CONTRACTL_END
+
+        SIZE_T maxCount = 4      // Possible separators between components, plus null terminator
+            + (drive != nullptr ? 2 : 0)
+            + (dir != nullptr ? wcslen(dir) : 0)
+            + (fname != nullptr ? wcslen(fname) : 0)
+            + (ext != nullptr ? wcslen(ext) : 0);
+        LPWSTR path = szPath.AllocNoThrow(maxCount);
 
         const WCHAR *p;
         DWORD count = 0;
@@ -91,11 +98,7 @@ void MakePath (
                         *path++ = *p++;
                         count++;
 
-                        if (count == MAX_LONGPATH) {
-                            --path;
-                            *path = _T('\0');
-                            return;
-                        }
+                        _ASSERTE(count < maxCount);
                 }
 
 #ifdef _MBCS
@@ -111,11 +114,7 @@ void MakePath (
                         *path++ = _T('\\');
                         count++;
 
-                        if (count == MAX_LONGPATH) {
-                            --path;
-                            *path = _T('\0');
-                            return;
-                        }
+                        _ASSERTE(count < maxCount);
                 }
         }
 
@@ -126,11 +125,7 @@ void MakePath (
                         *path++ = *p++;
                         count++;
 
-                        if (count == MAX_LONGPATH) {
-                            --path;
-                            *path = _T('\0');
-                            return;
-                        }
+                        _ASSERTE(count < maxCount);
                 }
         }
 
@@ -143,80 +138,23 @@ void MakePath (
                         *path++ = _T('.');
                         count++;
 
-                        if (count == MAX_LONGPATH) {
-                            --path;
-                            *path = _T('\0');
-                            return;
-                        }
+                        _ASSERTE(count < maxCount);
                 }
 
                 while ((*path++ = *p++)) {
                     count++;
 
-                    if (count == MAX_LONGPATH) {
-                        --path;
-                        *path = _T('\0');
-                        return;
-                    }
+                    _ASSERTE(count < maxCount);
                 }
         }
         else {
                 /* better add the 0-terminator */
                 *path = _T('\0');
         }
+
+        szPath.Shrink(count + 1);
 }
 
-#if !defined(FEATURE_CORECLR)
-static LPCWSTR g_wszProcessExePath = NULL;
-
-HRESULT GetProcessExePath(LPCWSTR *pwszProcessExePath)
-{
-    CONTRACTL
-    {
-        NOTHROW;
-        GC_NOTRIGGER;
-        CONSISTENCY_CHECK(CheckPointer(pwszProcessExePath));
-    }
-    CONTRACTL_END;
-
-    HRESULT hr = S_OK;
-
-    if (g_wszProcessExePath == NULL)
-    {
-        DWORD cchProcName = 0;
-        NewArrayHolder<WCHAR> wszProcName;
-        EX_TRY
-        {
-            PathString wszProcNameString;
-            cchProcName = WszGetModuleFileName(NULL, wszProcNameString);
-            if (cchProcName == 0)
-            {
-                hr = HRESULT_FROM_GetLastError();
-            }
-            else
-            {
-                wszProcName = wszProcNameString.GetCopyOfUnicodeString();
-            }
-        }
-        EX_CATCH_HRESULT(hr);
-
-        if (FAILED(hr))
-        {
-            return hr;
-        }
-        
-        if (InterlockedCompareExchangeT(&g_wszProcessExePath, const_cast<LPCWSTR>(wszProcName.GetValue()), NULL) == NULL)
-        {
-            wszProcName.SuppressRelease();
-        }
-    }
-    _ASSERTE(g_wszProcessExePath != NULL);
-    _ASSERTE(SUCCEEDED(hr));
-
-    *pwszProcessExePath = g_wszProcessExePath;
-    return hr;
-}
-#endif
 
 // Returns the directory for HMODULE. So, if HMODULE was for "C:\Dir1\Dir2\Filename.DLL",
 // then this would return "C:\Dir1\Dir2\" (note the trailing backslash).

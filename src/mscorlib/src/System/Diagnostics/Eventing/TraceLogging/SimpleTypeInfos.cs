@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Diagnostics;
 
 #if !ES_BUILD_AGAINST_DOTNET_V35
 using Contract = System.Diagnostics.Contracts.Contract;
@@ -47,15 +48,15 @@ namespace System.Diagnostics.Tracing
     /// <summary>
     /// Type handler for simple scalar types.
     /// </summary>
-    sealed class ScalarTypeInfo : TraceLoggingTypeInfo
+    internal sealed class ScalarTypeInfo : TraceLoggingTypeInfo
     {
-        Func<EventFieldFormat, TraceLoggingDataType, TraceLoggingDataType> formatFunc;
-        TraceLoggingDataType nativeFormat;
+        private Func<EventFieldFormat, TraceLoggingDataType, TraceLoggingDataType> formatFunc;
+        private TraceLoggingDataType nativeFormat;
 
         private ScalarTypeInfo(
             Type type,
             Func<EventFieldFormat, TraceLoggingDataType, TraceLoggingDataType> formatFunc,
-            TraceLoggingDataType nativeFormat) 
+            TraceLoggingDataType nativeFormat)
             : base(type)
         {
             this.formatFunc = formatFunc;
@@ -95,15 +96,15 @@ namespace System.Diagnostics.Tracing
     /// </summary>
     internal sealed class ScalarArrayTypeInfo : TraceLoggingTypeInfo
     {
-        Func<EventFieldFormat, TraceLoggingDataType, TraceLoggingDataType> formatFunc;
-        TraceLoggingDataType nativeFormat;
-        int elementSize;
+        private Func<EventFieldFormat, TraceLoggingDataType, TraceLoggingDataType> formatFunc;
+        private TraceLoggingDataType nativeFormat;
+        private int elementSize;
 
         private ScalarArrayTypeInfo(
             Type type,
             Func<EventFieldFormat, TraceLoggingDataType, TraceLoggingDataType> formatFunc,
             TraceLoggingDataType nativeFormat,
-            int elementSize) 
+            int elementSize)
             : base(type)
         {
             this.formatFunc = formatFunc;
@@ -157,14 +158,14 @@ namespace System.Diagnostics.Tracing
         {
             collector.AddBinary((string)value.ReferenceValue);
         }
-        
+
         public override object GetData(object value)
         {
-            if(value == null)
+            if (value == null)
             {
                 return "";
             }
-            
+
             return value;
         }
     }
@@ -269,10 +270,10 @@ namespace System.Diagnostics.Tracing
             : base(type)
         {
             var typeArgs = type.GenericTypeArguments;
-            Contract.Assert(typeArgs.Length == 1);
-            this.valueInfo = TraceLoggingTypeInfo.GetInstance(typeArgs[0], recursionCheck);
-            this.hasValueGetter = PropertyValue.GetPropertyGetter(type.GetTypeInfo().GetDeclaredProperty("HasValue"));
-            this.valueGetter = PropertyValue.GetPropertyGetter(type.GetTypeInfo().GetDeclaredProperty("Value"));
+            Debug.Assert(typeArgs.Length == 1);
+            valueInfo = TraceLoggingTypeInfo.GetInstance(typeArgs[0], recursionCheck);
+            hasValueGetter = PropertyValue.GetPropertyGetter(type.GetTypeInfo().GetDeclaredProperty("HasValue"));
+            valueGetter = PropertyValue.GetPropertyGetter(type.GetTypeInfo().GetDeclaredProperty("Value"));
         }
 
         public override void WriteMetadata(
@@ -282,7 +283,7 @@ namespace System.Diagnostics.Tracing
         {
             var group = collector.AddGroup(name);
             group.AddScalar("HasValue", TraceLoggingDataType.Boolean8);
-            this.valueInfo.WriteMetadata(group, "Value", format);
+            valueInfo.WriteMetadata(group, "Value", format);
         }
 
         public override void WriteData(TraceLoggingDataCollector collector, PropertyValue value)
@@ -290,7 +291,7 @@ namespace System.Diagnostics.Tracing
             var hasValue = hasValueGetter(value);
             collector.AddScalar(hasValue);
             var val = hasValue.ScalarValue.AsBoolean ? valueGetter(value) : valueInfo.PropertyValueFactory(Activator.CreateInstance(valueInfo.DataType));
-            this.valueInfo.WriteData(collector, val);
+            valueInfo.WriteData(collector, val);
         }
     }
 }

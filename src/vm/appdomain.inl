@@ -15,25 +15,9 @@
 #ifndef _APPDOMAIN_I
 #define _APPDOMAIN_I
 
-#ifndef BINDER
-
 #ifndef DACCESS_COMPILE
 
 #include "appdomain.hpp"
-
-#ifdef FEATURE_CORECLR 
-inline void BaseDomain::SetAppDomainCompatMode(AppDomainCompatMode compatMode)
-{
-    LIMITED_METHOD_CONTRACT;
-    m_CompatMode = compatMode;
-}
-
-inline BaseDomain::AppDomainCompatMode BaseDomain::GetAppDomainCompatMode()
-{
-    LIMITED_METHOD_CONTRACT;
-    return m_CompatMode;
-}
-#endif // FEATURE_CORECLR
 
 inline void AppDomain::SetUnloadInProgress(AppDomain *pThis)
 {
@@ -247,13 +231,6 @@ inline LPCWSTR AppDomain::GetAppDomainManagerType()
     return m_AppDomainManagerType;
 }
 
-#ifndef FEATURE_CORECLR
-inline BOOL AppDomain::AppDomainManagerSetFromConfig()
-{
-    WRAPPER_NO_CONTRACT;
-    return m_fAppDomainManagerSetInConfig;
-}
-#endif // !FEATURE_CORECLR
 
 inline EInitializeNewDomainFlags AppDomain::GetAppDomainManagerInitializeNewDomainFlags()
 {
@@ -261,7 +238,6 @@ inline EInitializeNewDomainFlags AppDomain::GetAppDomainManagerInitializeNewDoma
     return m_dwAppDomainManagerInitializeDomainFlags;
 }
 
-#ifdef FEATURE_CORECLR
 inline AppDomain::PathIterator AppDomain::IterateNativeDllSearchDirectories()
 {
     WRAPPER_NO_CONTRACT;
@@ -276,7 +252,6 @@ inline BOOL AppDomain::HasNativeDllSearchDirectories()
     return m_NativeDllSearchDirectories.GetCount() !=0;
 }
 
-#endif // FEATURE_CORECLR
 
 inline BOOL AppDomain::CanReversePInvokeEnter()
 {
@@ -325,8 +300,6 @@ inline PTR_LoaderAllocator AppDomain::GetLoaderAllocator()
     WRAPPER_NO_CONTRACT;
     return PTR_LoaderAllocator(PTR_HOST_MEMBER_TADDR(AppDomain,this,m_LoaderAllocator));
 }
-
-#endif // !BINDER
 
 /* static */
 inline DWORD DomainLocalModule::DynamicEntry::GetOffsetOfDataBlob() 

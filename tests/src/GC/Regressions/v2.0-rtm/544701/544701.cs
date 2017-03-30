@@ -2,8 +2,6 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-// originally a regression test for VSWhidbey 158720
-
 using System;
 internal class AllocBug
 {
@@ -37,17 +35,11 @@ internal class AllocBug
     {
         try
         {
-            Console.Write("Allocating ");
-            Console.Write(bytesToAlloc);
-            Console.Write(" bytes... ");
-
             byte[] buffer = new byte[bytesToAlloc];
-
-            Console.WriteLine("Passed");
         }
         catch (Exception)
         {
-            Console.WriteLine("Unexpected Exception: ");
+            Console.WriteLine("Unexpected Exception when allocating "+bytesToAlloc+" bytes.");
             ret = -1;
         }
     }

@@ -13,21 +13,17 @@
 **
 ===========================================================*/
 
-namespace System.Runtime.Serialization {
-    using System.Runtime.Remoting;
-    using System.Runtime.Serialization;
-    using System.Security.Permissions;
-    using System;
-    using System.Reflection;
+using System.Runtime.Remoting;
+using System.Runtime.Serialization;
+using System;
+using System.Reflection;
 
-    [System.Runtime.InteropServices.ComVisible(true)]
-    public interface ISerializable {
-#if FEATURE_SERIALIZATION
-        [System.Security.SecurityCritical]  // auto-generated_required
+namespace System.Runtime.Serialization
+{
+    public interface ISerializable
+    {
         void GetObjectData(SerializationInfo info, StreamingContext context);
-#endif
     }
-
 }
 
 

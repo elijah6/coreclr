@@ -1,3 +1,6 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /*
  * Copyright (c) 2003-2005  Tom Wu
  * All Rights Reserved.
@@ -31,7 +34,7 @@
 
 // Comment this out to use a fixed random number seed.
 
-#define USE_RANDOM_SEED
+// #define USE_RANDOM_SEED
 
 // The code has been adapted for use as a benchmark by Microsoft.
 
@@ -40,7 +43,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 
-namespace Crypto
+[assembly: OptimizeForBenchmarks]
+[assembly: MeasureInstructionsRetired]
+
+namespace V8.Crypto
 {
     public class Support
     {

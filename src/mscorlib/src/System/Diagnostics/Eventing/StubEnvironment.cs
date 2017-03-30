@@ -31,7 +31,7 @@ namespace System.Diagnostics.Tracing.Internal
                 return string.Format(fmt, args);
 
             string sargs = String.Empty;
-            foreach(var arg in args)
+            foreach (var arg in args)
             {
                 if (sargs != String.Empty)
                     sargs += ", ";
@@ -196,7 +196,7 @@ namespace Microsoft.Reflection
         String = 18,                // Unicode character string
     }
 #endif
-    static class ReflectionExtensions
+    internal static class ReflectionExtensions
     {
 #if (!ES_BUILD_PCL && !PROJECTN)
 
@@ -226,7 +226,7 @@ namespace Microsoft.Reflection
         public static bool IsGenericType(this Type type) { return type.IsConstructedGenericType; }
         public static Type BaseType(this Type type) { return type.GetTypeInfo().BaseType; }
         public static Assembly Assembly(this Type type) { return type.GetTypeInfo().Assembly; }
-        public static IEnumerable<PropertyInfo> GetProperties(this Type type) { return type.GetTypeInfo().DeclaredProperties; }
+        public static IEnumerable<PropertyInfo> GetProperties(this Type type) { return type.GetRuntimeProperties(); }
         public static MethodInfo GetGetMethod(this PropertyInfo propInfo) { return propInfo.GetMethod; }
         public static Type[] GetGenericArguments(this Type type) { return type.GenericTypeArguments; }
         
@@ -344,7 +344,7 @@ namespace Microsoft.Reflection
 #if ES_BUILD_PCL || PROJECTN
 namespace System.Security
 {
-    class SuppressUnmanagedCodeSecurityAttribute : Attribute { }
+    internal class SuppressUnmanagedCodeSecurityAttribute : Attribute { }
 
     enum SecurityAction { Demand }
 }

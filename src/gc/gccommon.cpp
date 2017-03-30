@@ -15,26 +15,23 @@
 #include "gc.h"
 
 #ifdef FEATURE_SVR_GC
-SVAL_IMPL_INIT(uint32_t,GCHeap,gcHeapType,GCHeap::GC_HEAP_INVALID);
+SVAL_IMPL_INIT(uint32_t,IGCHeap,gcHeapType,IGCHeap::GC_HEAP_INVALID);
 #endif // FEATURE_SVR_GC
 
-GPTR_IMPL(GCHeap,g_pGCHeap);
+SVAL_IMPL_INIT(uint32_t,IGCHeap,maxGeneration,2);
 
-/* global versions of the card table and brick table */ 
-GPTR_IMPL(uint32_t,g_card_table);
+IGCHeapInternal* g_theGCHeap;
+IGCHandleTable* g_theGCHandleTable;
 
-/* absolute bounds of the GC memory */
-GPTR_IMPL_INIT(uint8_t,g_lowest_address,0);
-GPTR_IMPL_INIT(uint8_t,g_highest_address,0);
+#ifdef FEATURE_STANDALONE_GC
+IGCToCLR* g_theGCToCLR;
+#endif // FEATURE_STANDALONE_GC
 
 #ifdef GC_CONFIG_DRIVEN
-GARY_IMPL(size_t, gc_global_mechanisms, MAX_GLOBAL_GC_MECHANISMS_COUNT);
+size_t gc_global_mechanisms[MAX_GLOBAL_GC_MECHANISMS_COUNT];
 #endif //GC_CONFIG_DRIVEN
 
 #ifndef DACCESS_COMPILE
-
-uint8_t* g_ephemeral_low = (uint8_t*)1;
-uint8_t* g_ephemeral_high = (uint8_t*)~0;
 
 #ifdef WRITE_BARRIER_CHECK
 uint8_t* g_GCShadow;
@@ -42,12 +39,19 @@ uint8_t* g_GCShadowEnd;
 uint8_t* g_shadow_lowest_address = NULL;
 #endif
 
-VOLATILE(int32_t) m_GCLock = -1;
+uint32_t* g_gc_card_table;
+
+#ifdef FEATURE_MANUALLY_MANAGED_CARD_BUNDLES
+uint32_t* g_gc_card_bundle_table;
+#endif
+
+uint8_t* g_gc_lowest_address  = 0;
+uint8_t* g_gc_highest_address = 0;
 
 #ifdef GC_CONFIG_DRIVEN
 void record_global_mechanism (int mech_index)
 {
-	(gc_global_mechanisms[mech_index])++;
+    (gc_global_mechanisms[mech_index])++;
 }
 #endif //GC_CONFIG_DRIVEN
 
@@ -55,7 +59,7 @@ int32_t g_bLowMemoryFromHost = 0;
 
 #ifdef WRITE_BARRIER_CHECK
 
-#define INVALIDGCVALUE (LPVOID)((size_t)0xcccccccd)
+#define INVALIDGCVALUE (void *)((size_t)0xcccccccd)
 
     // called by the write barrier to update the shadow heap
 void updateGCShadow(Object** ptr, Object* val)
@@ -110,6 +114,90 @@ void record_changed_seg (uint8_t* start, uint8_t* end,
     {
         saved_changed_segs_count = 0;
     }
+}
+
+// The runtime needs to know whether we're using workstation or server GC 
+// long before the GCHeap is created.
+void InitializeHeapType(bool bServerHeap)
+{
+    LIMITED_METHOD_CONTRACT;
+#ifdef FEATURE_SVR_GC
+    IGCHeap::gcHeapType = bServerHeap ? IGCHeap::GC_HEAP_SVR : IGCHeap::GC_HEAP_WKS;
+#ifdef WRITE_BARRIER_CHECK
+    if (IGCHeap::gcHeapType == IGCHeap::GC_HEAP_SVR)
+    {
+        g_GCShadow = 0;
+        g_GCShadowEnd = 0;
+    }
+#endif // WRITE_BARRIER_CHECK
+#else // FEATURE_SVR_GC
+    UNREFERENCED_PARAMETER(bServerHeap);
+    CONSISTENCY_CHECK(bServerHeap == false);
+#endif // FEATURE_SVR_GC
+}
+
+namespace WKS 
+{
+    extern void PopulateDacVars(GcDacVars* dacVars);
+}
+
+namespace SVR
+{
+    extern void PopulateDacVars(GcDacVars* dacVars);
+}
+
+bool InitializeGarbageCollector(IGCToCLR* clrToGC, IGCHeap** gcHeap, IGCHandleTable** gcHandleTable, GcDacVars* gcDacVars)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    IGCHeapInternal* heap;
+
+    assert(gcDacVars != nullptr);
+    assert(gcHeap != nullptr);
+    assert(gcHandleTable != nullptr);
+
+    IGCHandleTable* handleTable = CreateGCHandleTable();
+    if (handleTable == nullptr)
+    {
+        return false;
+    }
+
+#ifdef FEATURE_SVR_GC
+    assert(IGCHeap::gcHeapType != IGCHeap::GC_HEAP_INVALID);
+
+    if (IGCHeap::gcHeapType == IGCHeap::GC_HEAP_SVR)
+    {
+        heap = SVR::CreateGCHeap();
+        SVR::PopulateDacVars(gcDacVars);
+    }
+    else
+    {
+        heap = WKS::CreateGCHeap();
+        WKS::PopulateDacVars(gcDacVars);
+    }
+#else
+    heap = WKS::CreateGCHeap();
+    WKS::PopulateDacVars(gcDacVars);
+#endif
+
+    if (heap == nullptr)
+    {
+        return false;
+    }
+
+    g_theGCHeap = heap;
+
+#ifdef FEATURE_STANDALONE_GC
+    assert(clrToGC != nullptr);
+    g_theGCToCLR = clrToGC;
+#else
+    UNREFERENCED_PARAMETER(clrToGC);
+    assert(clrToGC == nullptr);
+#endif
+
+    *gcHandleTable = handleTable;
+    *gcHeap = heap;
+    return true;
 }
 
 #endif // !DACCESS_COMPILE

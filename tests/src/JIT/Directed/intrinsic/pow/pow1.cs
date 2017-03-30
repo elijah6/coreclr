@@ -14,16 +14,18 @@ internal class pow1
         double x, y, z;
         bool pass = true;
 
-        //Check if the test is being executed on ARM
-        bool isProcessorArm = false;
+        //Check if the test is being executed on ARMARCH
+        bool isProcessorArmArch = false;
 
         string processorArchEnvVar = null;
 
         processorArchEnvVar = Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE");
 
-        if ((processorArchEnvVar != null) && processorArchEnvVar.Equals("ARM", StringComparison.CurrentCultureIgnoreCase))
+        if ((processorArchEnvVar != null)
+            && (processorArchEnvVar.Equals("ARM", StringComparison.CurrentCultureIgnoreCase)
+                || processorArchEnvVar.Equals("ARM64", StringComparison.CurrentCultureIgnoreCase)))
         {
-            isProcessorArm = true;
+            isProcessorArmArch = true;
         }
 
         x = 0;
@@ -44,10 +46,10 @@ internal class pow1
             pass = false;
         }
 
-        if (isProcessorArm)
+        if (isProcessorArmArch)
         {
-            //Skip this Test due to the way how Double.Epsilon is defined on ARM
-            Console.WriteLine("Skipping Pow(Double.Epsilon,1) test on ARM");
+            //Skip this Test due to the way how Double.Epsilon is defined on ARMARCH
+            Console.WriteLine("Skipping Pow(Double.Epsilon,1) test on ARMARCH");
         }
         else
         {
@@ -127,7 +129,7 @@ internal class pow1
         x = 1;
         y = Double.NaN;
         z = Math.Pow(x, y);
-        if (!Double.IsNaN(z))
+        if (z != 1)
         {
             Console.WriteLine("x: {0}, y: {1}, Pow(x,y): {2}", x, y, z);
             pass = false;

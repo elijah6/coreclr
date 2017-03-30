@@ -94,7 +94,7 @@ namespace System.Diagnostics.Tracing
         {
             if (name == null)
             {
-                throw new ArgumentNullException("name");
+                throw new ArgumentNullException(nameof(name));
             }
 
             Contract.EndContractBlock();
@@ -132,7 +132,7 @@ namespace System.Diagnostics.Tracing
         {
             if (defaultName == null)
             {
-                throw new ArgumentNullException("defaultName");
+                throw new ArgumentNullException(nameof(defaultName));
             }
 
             Contract.EndContractBlock();
@@ -199,10 +199,10 @@ namespace System.Diagnostics.Tracing
 
         internal NameInfo GetNameInfo(string name, EventTags tags)
         {
-            var ret = this.nameInfos.TryGet(new KeyValuePair<string, EventTags>(name, tags));
+            var ret = nameInfos.TryGet(new KeyValuePair<string, EventTags>(name, tags));
             if (ret == null)
             {
-                ret = this.nameInfos.GetOrAdd(new NameInfo(name, tags, this.typeMetadata.Length));
+                ret = nameInfos.GetOrAdd(new NameInfo(name, tags, this.typeMetadata.Length));
             }
 
             return ret;
@@ -212,7 +212,7 @@ namespace System.Diagnostics.Tracing
         {
             if (paramInfos == null)
             {
-                throw new ArgumentNullException("paramInfos");
+                throw new ArgumentNullException(nameof(paramInfos));
             }
 
             Contract.EndContractBlock();
@@ -231,7 +231,7 @@ namespace System.Diagnostics.Tracing
         {
             if (types == null)
             {
-                throw new ArgumentNullException("types");
+                throw new ArgumentNullException(nameof(types));
             }
 
             Contract.EndContractBlock();
@@ -251,7 +251,7 @@ namespace System.Diagnostics.Tracing
         {
             if (typeInfos == null)
             {
-                throw new ArgumentNullException("typeInfos");
+                throw new ArgumentNullException(nameof(typeInfos));
             }
 
             Contract.EndContractBlock();

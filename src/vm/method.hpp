@@ -13,8 +13,6 @@
 #ifndef _METHOD_H 
 #define _METHOD_H
 
-#ifndef BINDER
-
 #include "cor.h"
 #include "util.hpp"
 #include "clsload.hpp"
@@ -31,13 +29,6 @@
 #ifndef FEATURE_PREJIT
 #include "fixuppointer.h"
 #endif
-#else // BINDER
-
-#include "fixuppointer.h"
-
-#define COMPLUSCALL_METHOD_DESC_ALIGNPAD_BYTES  3   // # bytes required to pad ComPlusCallMethodDesc to correct size
-
-#endif // BINDER
 
 class Stub;
 class FCallMethodDesc;
@@ -165,15 +156,6 @@ enum MethodDescClassification
     // Method requires linktime security checks.
     mdcRequiresLinktimeCheck            = 0x0080,
 
-#if defined(CLR_STANDALONE_BINDER)
-    // Binder optimization - we have already parsed the signature 
-    // of this method desc and it contains no user-defined value types (including enums)
-    mdcSignatureHasNoValueTypes         = 0x0100,
-
-    // This should contain bits used for binder-internal purposes - reset these
-    // before persisting the method descs
-    mdcBinderBits                       = mdcSignatureHasNoValueTypes,
-#else
     // Method requires inheritance security checks.
     // If this bit is set, then this method demands inheritance permissions
     // or a method that this method overrides demands inheritance permissions
@@ -184,7 +166,6 @@ enum MethodDescClassification
     // This bit is used as an optimization to avoid looking up overridden methods
     // during the inheritance check.
     mdcParentRequiresInheritanceCheck   = 0x0200,
-#endif
 
     // Duplicate method. When a method needs to be placed in multiple slots in the
     // method table, because it could not be packed into one slot. For eg, a method
@@ -303,7 +284,6 @@ public:
         return (m_bFlags2 & enum_flag2_HasPrecode) != 0;
     }
 
-#ifndef BINDER
     inline Precode* GetPrecode()
     {
         LIMITED_METHOD_DAC_CONTRACT;
@@ -313,7 +293,6 @@ public:
         PREFIX_ASSUME(pPrecode != NULL);
         return pPrecode;
     }
-#endif // !BINDER
 
     inline BOOL MayHavePrecode()
     {
@@ -327,22 +306,6 @@ public:
 
         return !MayHaveNativeCode() || IsRemotingInterceptedViaPrestub();
     }
-
-#ifdef BINDER
-    inline void SetHasPrecode()
-    {
-        LIMITED_METHOD_CONTRACT;
-        m_bFlags2 |= (enum_flag2_HasPrecode | enum_flag2_HasStableEntryPoint);
-    }
-
-    inline void ResetHasPrecode()
-    {
-
-        LIMITED_METHOD_CONTRACT;
-        m_bFlags2 &= ~enum_flag2_HasPrecode;
-        m_bFlags2 |= enum_flag2_HasStableEntryPoint;
-    }
-#endif // BINDER
 
     void InterlockedUpdateFlags2(BYTE bMask, BOOL fSet);
 
@@ -373,7 +336,6 @@ public:
     void PrecomputeNameHash();
     BOOL MightHaveName(ULONG nameHashValue);
 
-#ifndef BINDER
     FORCEINLINE LPCUTF8 GetNameOnNonArrayClass()
     {
         WRAPPER_NO_CONTRACT;
@@ -384,7 +346,6 @@ public:
         }
         return szName;
     }
-#endif // !BINDER
 
     COUNT_T GetStableHash();
 
@@ -457,13 +418,9 @@ public:
     FORCEINLINE BOOL IsMethodImpl()
     {
         LIMITED_METHOD_DAC_CONTRACT;
-#ifndef BINDER
         // Once we stop allocating dummy MethodImplSlot in MethodTableBuilder::WriteMethodImplData,
         // the check for NULL will become unnecessary.
         return HasMethodImplSlot() && (GetMethodImpl()->GetSlots() != NULL);
-#else // BINDER
-        return FALSE;
-#endif // BINDER
     }
 
     inline DWORD IsStatic()
@@ -567,15 +524,9 @@ public:
 
     inline BOOL IsDomainNeutral();
 
-#ifdef BINDER
-    MdilModule* GetLoaderModule();
-
-    MdilModule* GetZapModule();
-#else // !BINDER
     Module* GetLoaderModule();
 
     Module* GetZapModule();
-#endif
 
     // Does this immediate item live in an NGEN module?
     BOOL IsZapped();
@@ -772,7 +723,6 @@ public:
         m_bFlags2 |= enum_flag2_CASDemandsOnly;
     }
 
-#ifndef BINDER
     // If the method is in an Edit and Contine (EnC) module, then
     // we DON'T want to backpatch this, ever.  We MUST always call
     // through the precode so that we can update the method.
@@ -783,7 +733,6 @@ public:
         PREFIX_ASSUME(pModule != NULL);
         return pModule->IsEditAndContinueEnabled();
     }
-#endif // !BINDER
 
     inline BOOL IsNotInline()
     {
@@ -846,28 +795,8 @@ public:
 
     BOOL MayBeRemotingIntercepted();
 
-#ifndef BINDER
     //================================================================
     // Does it represent a one way method call with no out/return parameters?
-#ifdef FEATURE_REMOTING
-    inline BOOL IsOneWay()
-    {
-        CONTRACTL
-        {
-            NOTHROW;
-            GC_NOTRIGGER;
-            MODE_ANY;
-        }
-        CONTRACTL_END
-
-        return (S_OK == GetMDImport()->GetCustomAttributeByName(GetMemberDef(),
-                                                                "System.Runtime.Remoting.Messaging.OneWayAttribute",
-                                                                NULL,
-                                                                NULL));
-
-    }
-#endif // FEATURE_REMOTING
-#endif
 
     //================================================================
     // FCalls.
@@ -1000,8 +929,6 @@ public:
     MethodDesc *GetWrappedMethodDesc();
     MethodDesc *GetExistingWrappedMethodDesc();
 
-#ifndef BINDER
-
     //==================================================================
     // Access the underlying metadata
 
@@ -1019,7 +946,6 @@ public:
     }
 
     COR_ILMETHOD* GetILHeader(BOOL fAllowOverrides = FALSE);
-#endif // !BINDER
 
     BOOL HasStoredSig()
     {
@@ -1031,8 +957,6 @@ public:
 
     void GetSig(PCCOR_SIGNATURE *ppSig, DWORD *pcSig);
     SigParser GetSigParser();
-#ifndef BINDER
-
 
     // Convenience methods for common signature wrapper types.
     SigPointer GetSigPointer();
@@ -1069,7 +993,6 @@ public:
         return pModule->GetRWImporter();
     }
 #endif // !DACCESS_COMPILE
-#endif // !BINDER
 
 #ifdef FEATURE_COMINTEROP 
     WORD GetComSlot();
@@ -1218,9 +1141,6 @@ public:
     // class.
     inline MethodTable* GetCanonicalMethodTable();
 
-#ifdef BINDER
-    MdilModule *GetModule();
-#else
     Module *GetModule() const;
     Module *GetModule_NoLogging() const;
 
@@ -1231,7 +1151,6 @@ public:
         PREFIX_ASSUME(pModule != NULL);
         return pModule->GetAssembly();
     }
-#endif // !BINDER
 
     //==================================================================
     // The slot number of this method in the corresponding method table.
@@ -1271,13 +1190,6 @@ public:
         {
             SetRequiresFullSlotNumber();
         }
-#ifdef  CLR_STANDALONE_BINDER
-        else if (RequiresFullSlotNumber())
-        {
-            ClearRequiresFullSlotNumber();
-            m_wSlotNumber = 0;
-        }
-#endif
 
         // Set only the portion of m_wSlotNumber we are using
         if (!RequiresFullSlotNumber())
@@ -1302,15 +1214,6 @@ protected:
         m_wFlags |= mdcRequiresFullSlotNumber;
     }
 
-#ifdef CLR_STANDALONE_BINDER
-    inline void ClearRequiresFullSlotNumber()
-    {
-
-        LIMITED_METHOD_CONTRACT;
-        m_wFlags &= ~mdcRequiresFullSlotNumber;
-    }
-#endif
-
     inline DWORD RequiresFullSlotNumber()
     {
         LIMITED_METHOD_DAC_CONTRACT;
@@ -1333,26 +1236,6 @@ public:
         return m_wFlags & mdcRequiresLinktimeCheck;
     }
 
-#if defined(CLR_STANDALONE_BINDER)
-    inline BOOL SignatureHasNoValueTypes()
-    {
-        LIMITED_METHOD_CONTRACT;
-        return m_wFlags & mdcSignatureHasNoValueTypes;
-    }
-
-    inline void SetSignatureHasNoValueTypes()
-    {
-        LIMITED_METHOD_CONTRACT;
-        m_wFlags |= mdcSignatureHasNoValueTypes;
-    }
-
-    // Clear bits used for binder-internal purposes
-    inline void ClearBinderBits()
-    {
-        LIMITED_METHOD_CONTRACT;
-        m_wFlags &= ~mdcBinderBits;
-    }
-#else
     inline DWORD RequiresInheritanceCheck()
     {
         LIMITED_METHOD_CONTRACT;
@@ -1364,7 +1247,6 @@ public:
         LIMITED_METHOD_CONTRACT;
         return m_wFlags & mdcParentRequiresInheritanceCheck;
     }
-#endif
 
     void SetRequiresLinktimeCheck()
     {
@@ -1372,7 +1254,6 @@ public:
         m_wFlags |= mdcRequiresLinktimeCheck;
     }
 
-#ifndef BINDER
     void SetRequiresInheritanceCheck()
     {
         LIMITED_METHOD_CONTRACT;
@@ -1384,7 +1265,6 @@ public:
         LIMITED_METHOD_CONTRACT;
         m_wFlags |= mdcParentRequiresInheritanceCheck;
     }
-#endif
 
     mdMethodDef GetMemberDef() const;
     mdMethodDef GetMemberDef_NoLogging() const;
@@ -1410,6 +1290,58 @@ public:
 
 public:
 
+#ifdef FEATURE_TIERED_COMPILATION
+    // Is this method allowed to be recompiled and the entrypoint redirected so that we
+    // can optimize its performance? Eligibility is invariant for the lifetime of a method.
+    BOOL IsEligibleForTieredCompilation()
+    {
+        LIMITED_METHOD_DAC_CONTRACT;
+
+        // This policy will need to change some more before tiered compilation feature
+        // can be properly supported across a broad range of scenarios. For instance it 
+        // wouldn't interact correctly debugging or profiling at the moment because we 
+        // enable it too aggresively and it conflicts with the operations of those features.
+
+        //Keep in-sync with MethodTableBuilder::NeedsNativeCodeSlot(bmtMDMethod * pMDMethod)
+        //In the future we might want mutable vtable slots too, but that would require
+        //more work around the runtime to prevent those mutable pointers from leaking
+        return g_pConfig->TieredCompilation() &&
+            !GetModule()->HasNativeOrReadyToRunImage() &&
+            !IsEnCMethod() &&
+            HasNativeCodeSlot();
+
+    }
+#endif
+
+    // Does this method force the NativeCodeSlot to stay fixed after it
+    // is first initialized to native code? Consumers of the native code
+    // pointer need to be very careful about if and when they cache it
+    // if it is not stable.
+    //
+    // The stability of the native code pointer is separate from the
+    // stability of the entrypoint. A stable entrypoint can be a precode
+    // which dispatches to an unstable native code pointer.
+    BOOL IsNativeCodeStableAfterInit()
+    {
+        LIMITED_METHOD_DAC_CONTRACT;
+        return 
+#ifdef FEATURE_TIERED_COMPILATION
+            !IsEligibleForTieredCompilation() &&
+#endif
+            !IsEnCMethod();
+    }
+
+    //Is this method currently pointing to native code that will never change?
+    BOOL IsPointingToStableNativeCode()
+    {
+        LIMITED_METHOD_DAC_CONTRACT;
+
+        if (!IsNativeCodeStableAfterInit())
+            return FALSE;
+
+        return IsPointingToNativeCode();
+    }
+
     // Note: We are skipping the prestub based on addition information from the JIT.
     // (e.g. that the call is on same this ptr or that the this ptr is not null).
     // Thus we can end up with a running NGENed method for which IsPointingToNativeCode is false!
@@ -1423,11 +1355,7 @@ public:
         if (!HasPrecode())
             return TRUE;
 
-#ifdef BINDER
-        return TRUE;
-#else // !BINDER
         return GetPrecode()->IsPointingToNativeCode(GetNativeCode());
-#endif // BINDER
     }
 
     // Be careful about races with profiler when using this method. The profiler can 
@@ -1755,7 +1683,7 @@ public:
 
     PCODE DoPrestub(MethodTable *pDispatchingMT);
 
-    PCODE MakeJitWorker(COR_ILMETHOD_DECODER* ILHeader, DWORD  flags, DWORD flags2);
+    PCODE MakeJitWorker(COR_ILMETHOD_DECODER* ILHeader, CORJIT_FLAGS flags);
 
     VOID GetMethodInfo(SString &namespaceOrClassName, SString &methodName, SString &methodSignature);
     VOID GetMethodInfoWithNewSig(SString &namespaceOrClassName, SString &methodName, SString &methodSignature);
@@ -1827,11 +1755,7 @@ public:
 #else
         ;
 #endif
-#ifdef BINDER
-    typedef void (*WalkValueTypeParameterFnPtr)(MdilModule *pModule, mdToken token, const SigParser *ptr, SigTypeContext *pTypeContext, void *pData);
-#else
     typedef void (*WalkValueTypeParameterFnPtr)(Module *pModule, mdToken token, Module *pDefModule, mdToken tkDefToken, const SigParser *ptr, SigTypeContext *pTypeContext, void *pData);
-#endif
 
     void WalkValueTypeParameters(MethodTable *pMT, WalkValueTypeParameterFnPtr function, void *pData);
 
@@ -1985,19 +1909,19 @@ public:
     inline BOOL HaveValueTypeParametersBeenWalked()
     {
         LIMITED_METHOD_DAC_CONTRACT;
-#ifndef CLR_STANDALONE_BINDER
+
         // This should only be asked of non-Zapped MethodDescs, and only during execution (not compilation)
         _ASSERTE(!IsZapped() && !IsCompilationProcess());
-#endif
+
         return (m_wFlags3AndTokenRemainder & enum_flag3_ValueTypeParametersWalked) != 0;
     }
 
     inline void SetValueTypeParametersWalked()
     {
         LIMITED_METHOD_CONTRACT;
-#ifndef CLR_STANDALONE_BINDER
+
         _ASSERTE(!IsZapped() && !IsCompilationProcess());
-#endif
+
         InterlockedUpdateFlags3(enum_flag3_ValueTypeParametersWalked, TRUE);
     }
 
@@ -2035,9 +1959,6 @@ class MethodDescChunk
 {
     friend class MethodDesc;
     friend class CheckAsmOffsets;
-#ifdef BINDER
-    friend class MdilModule;
-#endif
 #if defined(FEATURE_PREJIT) && !defined(DACCESS_COMPILE)
     friend class MethodDesc::SaveChunk;
 #endif
@@ -2164,7 +2085,6 @@ public:
     }
 #endif // !DACCESS_COMPILE
 
-#ifndef BINDER
 #ifdef FEATURE_PREJIT 
 #ifndef DACCESS_COMPILE 
     inline void RestoreMTPointer(ClassLoadLevel level = CLASS_LOADED)
@@ -2174,7 +2094,6 @@ public:
     }
 #endif // !DACCESS_COMPILE
 #endif // FEATURE_PREJIT
-#endif // !BINDER
 
 #ifndef DACCESS_COMPILE 
     void SetNextChunk(MethodDescChunk *chunk)
@@ -2326,9 +2245,7 @@ class StoredSigMethodDesc : public MethodDesc
         return (PCCOR_SIGNATURE)
             DacInstantiateTypeByAddress(m_pSig, m_cSig, true);
 #else // !DACCESS_COMPILE
-#ifndef BINDER
         g_IBCLogger.LogNDirectCodeAccess(this);
-#endif
         return (PCCOR_SIGNATURE)m_pSig;
 #endif // !DACCESS_COMPILE
     }
@@ -2393,10 +2310,6 @@ class DynamicMethodDesc : public StoredSigMethodDesc
 #ifdef DACCESS_COMPILE
     friend class NativeImageDumper;
 #endif
-#ifdef MDIL
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 
 protected:
     PTR_CUTF8           m_pszMethodName;
@@ -2425,6 +2338,7 @@ protected:
         nomdStubNeedsCOMStarted   = 0x0800,  // EnsureComStarted must be called before executing the method
         nomdMulticastStub         = 0x1000,
         nomdUnboxingILStub        = 0x2000,
+        nomdSecureDelegateStub    = 0x4000,
 
         nomdILStub          = 0x00010000,
         nomdLCGMethod       = 0x00020000,
@@ -2533,6 +2447,11 @@ public:
     bool IsSignatureNeedsRestore() { LIMITED_METHOD_CONTRACT; _ASSERTE(IsILStub()); return (0 != (m_dwExtendedFlags & nomdSignatureNeedsRestore)); }
     bool IsStubNeedsCOMStarted()   { LIMITED_METHOD_CONTRACT; _ASSERTE(IsILStub()); return (0 != (m_dwExtendedFlags & nomdStubNeedsCOMStarted)); }
 #ifdef FEATURE_STUBS_AS_IL
+    bool IsSecureDelegateStub() {
+        LIMITED_METHOD_DAC_CONTRACT;
+        _ASSERTE(IsILStub());
+        return !!(m_dwExtendedFlags & nomdSecureDelegateStub);
+    }
     bool IsMulticastStub() { 
         LIMITED_METHOD_DAC_CONTRACT; 
         _ASSERTE(IsILStub());
@@ -2674,9 +2593,7 @@ public:
         NDirectImportThunkGlue      m_ImportThunkGlue;
 #endif // HAS_NDIRECT_IMPORT_PRECODE
 
-#ifndef FEATURE_CORECLR
         ULONG       m_DefaultDllImportSearchPathsAttributeValue; // DefaultDllImportSearchPathsAttribute is saved.
-#endif
 
         // Various attributes needed at runtime.
         WORD        m_wFlags;
@@ -2709,9 +2626,7 @@ public:
 
         kHasSuppressUnmanagedCodeAccess = 0x0002,
 
-#ifndef FEATURE_CORECLR
         kDefaultDllImportSearchPathsIsCached = 0x0004, // set if we cache attribute value.
-#endif
 
         // kUnusedMask                  = 0x0008
 
@@ -2735,9 +2650,7 @@ public:
 
         kIsQCall                        = 0x1000,
 
-#if !defined(FEATURE_CORECLR)
         kDefaultDllImportSearchPathsStatus = 0x2000, // either method has custom attribute or not.
-#endif
 
         kHasCopyCtorArgs                = 0x4000,
 
@@ -2766,19 +2679,6 @@ public:
     // Atomically set specified flags. Only setting of the bits is supported.
     void InterlockedSetNDirectFlags(WORD wFlags);
 
-#ifdef FEATURE_MIXEDMODE // IJW
-    void SetIsEarlyBound()
-    {
-        LIMITED_METHOD_CONTRACT;
-        ndirect.m_wFlags |= kEarlyBound;
-    }
-
-    BOOL IsEarlyBound()
-    {
-        LIMITED_METHOD_CONTRACT;
-        return (ndirect.m_wFlags & kEarlyBound) != 0;
-    }
-#endif // FEATURE_MIXEDMODE
 
     BOOL IsNativeAnsi() const
     {
@@ -2794,22 +2694,6 @@ public:
         return (ndirect.m_wFlags & kNativeNoMangle) != 0;
     }
 
-#ifndef FEATURE_CORECLR
-    BOOL HasSuppressUnmanagedCodeAccessAttr() const
-    {
-        LIMITED_METHOD_CONTRACT;
-
-        return (ndirect.m_wFlags & kHasSuppressUnmanagedCodeAccess) != 0;
-    }
-
-    void SetSuppressUnmanagedCodeAccessAttr(BOOL value)
-    {
-        LIMITED_METHOD_CONTRACT;
-
-        if (value)
-            ndirect.m_wFlags |= kHasSuppressUnmanagedCodeAccess;
-    }
-#endif
 
     DWORD GetECallID() const
     {
@@ -2870,7 +2754,6 @@ public:
         return (ndirect.m_wFlags & kIsQCall) != 0;
     }
 
-#ifndef FEATURE_CORECLR
     BOOL HasDefaultDllImportSearchPathsAttribute();
 
     BOOL IsDefaultDllImportSearchPathsAttributeCached()
@@ -2890,7 +2773,6 @@ public:
         LIMITED_METHOD_CONTRACT;
         return (ndirect.m_DefaultDllImportSearchPathsAttributeValue & 0x2) != 0;
     }
-#endif // !FEATURE_CORECLR
 
     BOOL HasCopyCtorArgs() const
     {
@@ -3019,9 +2901,6 @@ public:
     }
 #endif // defined(_TARGET_X86_)
 
-#ifdef FEATURE_MIXEDMODE // IJW
-    VOID InitEarlyBoundNDirectTarget();
-#endif
 
     // In AppDomains, we can trigger declarer's cctor when we link the P/Invoke,
     // which takes care of inlined calls as well. See code:NDirect.NDirectLink.
@@ -3030,7 +2909,6 @@ public:
     // trigger at it link time as well because linking may depend on it - the
     // cctor may change the target DLL, change DLL search path etc.
     BOOL IsClassConstructorTriggeredAtLinkTime()
-#ifndef CLR_STANDALONE_BINDER
     {
         LIMITED_METHOD_CONTRACT;       
         MethodTable * pMT = GetMethodTable();
@@ -3039,25 +2917,18 @@ public:
             return FALSE;      
         return !pMT->GetClass()->IsBeforeFieldInit();
     }
-#else
-    ;
-#endif
 
 #ifndef DACCESS_COMPILE
     // In the shared domain and in NGENed code, we will trigger declarer's cctor
     // in the marshaling stub by calling code:StubHelpers.InitDeclaringType. If
     // this returns TRUE, the call must not be inlined.
     BOOL IsClassConstructorTriggeredByILStub()
-#ifndef CLR_STANDALONE_BINDER
     {
         WRAPPER_NO_CONTRACT;
         
         return (IsClassConstructorTriggeredAtLinkTime() &&
                 (IsZapped() || GetDomain()->IsSharedDomain() || SystemDomain::GetCurrentDomain()->IsCompilationDomain()));
     }
-#else
-    ;
-#endif
 #endif //!DACCESS_COMPILE
 };  //class NDirectMethodDesc
 
@@ -3093,12 +2964,7 @@ struct ComPlusCallInfo
         kHasCopyCtorArgs                = 0x4,
     };
 
-#if defined(FEATURE_REMOTING) && !defined(HAS_REMOTING_PRECODE)
-    // These two fields cannot overlap in this case because of AMD64 GenericComPlusCallStub uses m_pILStub on the COM event provider path
-    struct
-#else
     union
-#endif
     {
         // IL stub for CLR to COM call
         PCODE m_pILStub; 
@@ -3232,34 +3098,6 @@ public:
         return m_pComPlusCallInfo->m_pEventProviderMD;
     }
 
-#ifndef FEATURE_CORECLR
-
-#ifndef BINDER
-    BOOL HasSuppressUnmanagedCodeAccessAttr()
-    {
-        LIMITED_METHOD_CONTRACT;
-
-        if (m_pComPlusCallInfo != NULL)
-        {
-            return (m_pComPlusCallInfo->m_flags & ComPlusCallInfo::kHasSuppressUnmanagedCodeAccess) != 0;
-        }
-        
-        // it is possible that somebody will call this before we initialized m_pComPlusCallInfo
-        return (GetMDImport()->GetCustomAttributeByName(GetMemberDef(),
-                                                        COR_SUPPRESS_UNMANAGED_CODE_CHECK_ATTRIBUTE_ANSI,
-                                                        NULL,
-                                                        NULL) == S_OK);
-    }
-#endif // !BINDER
-
-    void SetSuppressUnmanagedCodeAccessAttr(BOOL value)
-    {
-        LIMITED_METHOD_CONTRACT;
-
-        if (value)
-            FastInterlockOr(reinterpret_cast<DWORD *>(&m_pComPlusCallInfo->m_flags), ComPlusCallInfo::kHasSuppressUnmanagedCodeAccess);
-    }
-#endif // FEATURE_CORECLR
 
     BOOL RequiresArgumentWrapping()
     {
@@ -3357,10 +3195,6 @@ class InstantiatedMethodDesc : public MethodDesc
     friend class NativeImageDumper;
 #endif
 
-#ifdef BINDER
-    friend class CompactTypeBuilder;
-    friend class MdilModule;
-#endif
 public:
 
     // All varities of InstantiatedMethodDesc's support this method.
@@ -3376,15 +3210,11 @@ public:
 
     // All varieties of InstantiatedMethodDesc's support this method.
     Instantiation IMD_GetMethodInstantiation()
-#ifndef BINDER
     {
         LIMITED_METHOD_DAC_CONTRACT;
 
         return Instantiation(m_pPerInstInfo->GetInstantiation(), m_wNumGenericArgs);
     }
-#else
-    ; // The binder requires a special implementation of this method as its methoddesc data structure holds the instantiation in a different way.
-#endif
 
     PTR_Dictionary IMD_GetMethodDictionary()
     {
@@ -3468,16 +3298,6 @@ public:
         else
             return NULL;
     }
-
-#ifdef BINDER
-    void IMD_SetDictionaryLayout(DictionaryLayout *dictionaryLayout)
-    {
-
-        LIMITED_METHOD_CONTRACT;
-
-        m_pDictLayout = dictionaryLayout;
-    }
-#endif
 
     MethodDesc* IMD_GetWrappedMethodDesc()
     {
@@ -3591,7 +3411,6 @@ inline PTR_MethodTable MethodDesc::GetMethodTable() const
     return GetMethodTable_NoLogging();
 }
 
-#ifndef BINDER
 inline DPTR(RelativeFixupPointer<PTR_MethodTable>) MethodDesc::GetMethodTablePtr() const
 {
     LIMITED_METHOD_DAC_CONTRACT;
@@ -3607,7 +3426,6 @@ inline MethodTable* MethodDesc::GetCanonicalMethodTable()
 
     return GetMethodTable()->GetCanonicalMethodTable();
 }
-#endif // !BINDER
 
 inline mdMethodDef MethodDesc::GetMemberDef_NoLogging() const
 {
@@ -3676,7 +3494,6 @@ inline void MethodDesc::SetMemberDef(mdMethodDef mb)
 
 #ifdef _DEBUG 
 
-#ifndef BINDER
 inline BOOL MethodDesc::SanityCheck()
 {
     CONTRACTL
@@ -3701,18 +3518,13 @@ inline BOOL MethodDesc::SanityCheck()
     return TRUE;
 }
 
-#endif // !BINDER
 #endif // _DEBUG
 
 inline BOOL MethodDesc::IsEnCAddedMethod()
 {
     LIMITED_METHOD_DAC_CONTRACT;
 
-#ifdef BINDER
-    return FALSE;
-#else // !BINDER
     return (GetClassification() == mcInstantiated) && AsInstantiatedMethodDesc()->IMD_IsEnCAddedMethod();
-#endif // !BINDER
 }
 
 inline BOOL MethodDesc::HasNonVtableSlot()
@@ -3755,22 +3567,22 @@ inline BOOL MethodDesc::HasMethodInstantiation() const
     return mcInstantiated == GetClassification() && AsInstantiatedMethodDesc()->IMD_HasMethodInstantiation();
 }
 
-#ifdef BINDER
-inline BOOL MethodDesc::IsTypicalMethodDefinition() const
+#if defined(FEATURE_GDBJIT)
+class CalledMethod
 {
-    WRAPPER_NO_CONTRACT;
-
-    if (HasMethodInstantiation() && !IsGenericMethodDefinition())
-        return FALSE;
-
-    if (HasClassInstantiation() && !GetMethodTable()->IsGenericTypeDefinition())
-        return FALSE;
-
-    return TRUE;
-}
-#endif // !BINDER
+private:
+    MethodDesc * m_pMD;
+    void * m_CallAddr;
+    CalledMethod * m_pNext;
+public:
+    CalledMethod(MethodDesc *pMD, void * addr, CalledMethod * next) : m_pMD(pMD), m_CallAddr(addr), m_pNext(next)  {}
+    ~CalledMethod() {}
+    MethodDesc * GetMethodDesc() { return m_pMD; }
+    void * GetCallAddr() { return m_CallAddr; }
+    CalledMethod * GetNext() { return m_pNext; }
+};
+#endif
 
 #include "method.inl"
-
 
 #endif // !_METHOD_H

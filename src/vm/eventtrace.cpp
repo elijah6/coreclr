@@ -431,19 +431,19 @@ ETW::SamplingLog::EtwStackWalkStatus ETW::SamplingLog::SaveCurrentStack(int skip
 
 VOID ETW::GCLog::GCSettingsEvent()
 {
-    if (GCHeap::IsGCHeapInitialized())
+    if (GCHeapUtilities::IsGCHeapInitialized())
     {
         if (ETW_TRACING_ENABLED(MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_Context, 
                                                  GCSettings))
         {
             ETW::GCLog::ETW_GC_INFO Info;
 
-            Info.GCSettings.ServerGC = GCHeap::IsServerHeap ();
-            Info.GCSettings.SegmentSize = GCHeap::GetGCHeap()->GetValidSegmentSize (FALSE);
-            Info.GCSettings.LargeObjectSegmentSize = GCHeap::GetGCHeap()->GetValidSegmentSize (TRUE);
+            Info.GCSettings.ServerGC = GCHeapUtilities::IsServerHeap ();
+            Info.GCSettings.SegmentSize = GCHeapUtilities::GetGCHeap()->GetValidSegmentSize (false);
+            Info.GCSettings.LargeObjectSegmentSize = GCHeapUtilities::GetGCHeap()->GetValidSegmentSize (true);
             FireEtwGCSettings_V1(Info.GCSettings.SegmentSize, Info.GCSettings.LargeObjectSegmentSize, Info.GCSettings.ServerGC, GetClrInstanceId());
         }  
-        GCHeap::GetGCHeap()->TraceGCSegments();
+        GCHeapUtilities::GetGCHeap()->DiagTraceGCSegments();
     }
 };
 
@@ -892,7 +892,7 @@ VOID ETW::GCLog::FireGcStartAndGenerationRanges(ETW_GC_INFO * pGcInfo)
         // GCStart, then retrieve it
         LONGLONG l64ClientSequenceNumberToLog = 0;
         if ((s_l64LastClientSequenceNumber != 0) &&
-            (pGcInfo->GCStart.Depth == GCHeap::GetMaxGeneration()) &&
+            (pGcInfo->GCStart.Depth == GCHeapUtilities::GetGCHeap()->GetMaxGeneration()) &&
             (pGcInfo->GCStart.Reason == ETW_GC_INFO::GC_INDUCED))
         {
             l64ClientSequenceNumberToLog = InterlockedExchange64(&s_l64LastClientSequenceNumber, 0);
@@ -901,8 +901,8 @@ VOID ETW::GCLog::FireGcStartAndGenerationRanges(ETW_GC_INFO * pGcInfo)
         FireEtwGCStart_V2(pGcInfo->GCStart.Count, pGcInfo->GCStart.Depth, pGcInfo->GCStart.Reason, pGcInfo->GCStart.Type, GetClrInstanceId(), l64ClientSequenceNumberToLog);
 
         // Fire an event per range per generation
-        GCHeap *hp = GCHeap::GetGCHeap();
-        hp->DescrGenerationsToProfiler(FireSingleGenerationRangeEvent, NULL /* context */);
+        IGCHeap *hp = GCHeapUtilities::GetGCHeap();
+        hp->DiagDescrGenerations(FireSingleGenerationRangeEvent, NULL /* context */);
     }
 }
 
@@ -928,8 +928,8 @@ VOID ETW::GCLog::FireGcEndAndGenerationRanges(ULONG Count, ULONG Depth)
         CLR_GC_KEYWORD))
     {
         // Fire an event per range per generation
-        GCHeap *hp = GCHeap::GetGCHeap();
-        hp->DescrGenerationsToProfiler(FireSingleGenerationRangeEvent, NULL /* context */);
+        IGCHeap *hp = GCHeapUtilities::GetGCHeap();
+        hp->DiagDescrGenerations(FireSingleGenerationRangeEvent, NULL /* context */);
 
         // GCEnd
         FireEtwGCEnd_V1(Count, Depth, GetClrInstanceId());
@@ -938,7 +938,7 @@ VOID ETW::GCLog::FireGcEndAndGenerationRanges(ULONG Count, ULONG Depth)
  
 //---------------------------------------------------------------------------------------
 //
-// Callback made by GC when we call GCHeap::DescrGenerationsToProfiler().  This is
+// Callback made by GC when we call GCHeapUtilities::DiagDescrGenerations().  This is
 // called once per range per generation, and results in a single ETW event per range per
 // generation.
 //
@@ -1033,9 +1033,9 @@ HRESULT ETW::GCLog::ForceGCForDiagnostics()
         
         ForcedGCHolder forcedGCHolder;
         
-        hr = GCHeap::GetGCHeap()->GarbageCollect(
+        hr = GCHeapUtilities::GetGCHeap()->GarbageCollect(
             -1,     // all generations should be collected
-            FALSE,  // low_memory_p
+            false,  // low_memory_p
             collection_blocking);
 
 #ifndef FEATURE_REDHAWK
@@ -1205,10 +1205,11 @@ void BulkComLogger::FlushRcw()
     EventDataDescCreate(&eventData[2], m_etwRcwData, sizeof(EventRCWEntry) * m_currRcw);
 
     ULONG result = EventWrite(Microsoft_Windows_DotNETRuntimeHandle, &GCBulkRCW, _countof(eventData), eventData);
-    _ASSERTE(result == ERROR_SUCCESS);
 #else
-// UNIXTODO: "Eventing Not Implemented"
+    ULONG result = FireEtXplatGCBulkRCW(m_currRcw, instance, sizeof(EventRCWEntry) * m_currRcw, m_etwRcwData);
 #endif // !defined(FEATURE_PAL)
+
+    _ASSERTE(result == ERROR_SUCCESS);
 
     m_currRcw = 0;
 }
@@ -1293,11 +1294,11 @@ void BulkComLogger::FlushCcw()
     EventDataDescCreate(&eventData[2], m_etwCcwData, sizeof(EventCCWEntry) * m_currCcw);
 
     ULONG result = EventWrite(Microsoft_Windows_DotNETRuntimeHandle, &GCBulkRootCCW, _countof(eventData), eventData);
-    _ASSERTE(result == ERROR_SUCCESS);
 #else
-// UNIXTODO: "Eventing Not Implemented"
+    ULONG result = FireEtXplatGCBulkRootCCW(m_currCcw, instance, sizeof(EventCCWEntry) * m_currCcw, m_etwCcwData);
 #endif //!defined(FEATURE_PAL)
 
+    _ASSERTE(result == ERROR_SUCCESS);
 
     m_currCcw = 0;
 }
@@ -1497,10 +1498,11 @@ void BulkStaticsLogger::FireBulkStaticsEvent()
     EventDataDescCreate(&eventData[3], m_buffer, m_used);
 
     ULONG result = EventWrite(Microsoft_Windows_DotNETRuntimeHandle, &GCBulkRootStaticVar, _countof(eventData), eventData);
-    _ASSERTE(result == ERROR_SUCCESS);
 #else
-// UNIXTODO: "Eventing Not Implemented"
+    ULONG result = FireEtXplatGCBulkRootStaticVar(m_count, appDomain, instance, m_used, m_buffer);
 #endif //!defined(FEATURE_PAL)
+
+    _ASSERTE(result == ERROR_SUCCESS);
 
     m_used = 0;
     m_count = 0;
@@ -1700,7 +1702,6 @@ void BulkTypeValue::Clear()
 //
 //
 
-#if !defined(FEATURE_PAL)
 void BulkTypeEventLogger::FireBulkTypeEvent()
 {
     LIMITED_METHOD_CONTRACT;
@@ -1710,7 +1711,10 @@ void BulkTypeEventLogger::FireBulkTypeEvent()
         // No types were batched up, so nothing to send
         return;
     }
+    
+    UINT16 nClrInstanceID = GetClrInstanceId();
 
+#if !defined(FEATURE_PAL)
     // Normally, we'd use the MC-generated FireEtwBulkType for all this gunk, but
     // it's insufficient as the bulk type event is too complex (arrays of structs of
     // varying size). So we directly log the event via EventDataDescCreate and
@@ -1722,7 +1726,6 @@ void BulkTypeEventLogger::FireBulkTypeEvent()
     // before the 64K event size limit, and we already limit our batch size
     // (m_nBulkTypeValueCount) to stay within the 128 descriptor limit.
     EVENT_DATA_DESCRIPTOR EventData[128];
-    UINT16 nClrInstanceID = GetClrInstanceId();
 
     UINT iDesc = 0;
 
@@ -1783,18 +1786,62 @@ void BulkTypeEventLogger::FireBulkTypeEvent()
     }
 
     Win32EventWrite(Microsoft_Windows_DotNETRuntimeHandle, &BulkType, iDesc, EventData);
+    
+#else // FEATURE_PAL
 
+    UINT iSize = 0;
+    
+    for (int iTypeData = 0; iTypeData < m_nBulkTypeValueCount; iTypeData++)
+    {
+        BulkTypeValue& target = m_rgBulkTypeValues[iTypeData];
+        
+        // Do fixed-size data as one bulk copy
+        memcpy(
+                m_BulkTypeEventBuffer + iSize,
+                &(target.fixedSizedData),
+                sizeof(target.fixedSizedData));
+        iSize += sizeof(target.fixedSizedData);
+
+        // Do var-sized data individually per field
+
+        LPCWSTR wszName = target.sName.GetUnicode();
+        if (wszName == NULL)
+        {
+            m_BulkTypeEventBuffer[iSize++] = 0;
+            m_BulkTypeEventBuffer[iSize++] = 0;
+        }
+        else
+        {
+            UINT nameSize = (target.sName.GetCount() + 1) * sizeof(WCHAR);
+            memcpy(m_BulkTypeEventBuffer + iSize, wszName, nameSize);
+            iSize += nameSize;
+        }
+
+        // Type parameter count
+        ULONG params = target.rgTypeParameters.GetCount();
+        
+        ULONG *ptrInt = (ULONG*)(m_BulkTypeEventBuffer + iSize);
+        *ptrInt = params;
+        iSize += 4;
+        
+        target.cTypeParameters = params;
+
+        // Type parameter array
+        if (target.cTypeParameters > 0)
+        {
+            memcpy(m_BulkTypeEventBuffer + iSize, target.rgTypeParameters.GetElements(), sizeof(ULONGLONG) * target.cTypeParameters);
+            iSize += sizeof(ULONGLONG) * target.cTypeParameters;
+        }
+    }
+
+    FireEtwBulkType(m_nBulkTypeValueCount, GetClrInstanceId(), iSize, m_BulkTypeEventBuffer);
+
+#endif // FEATURE_PAL
     // Reset state
     m_nBulkTypeValueCount = 0;
     m_nBulkTypeValueByteCount = 0;
 }
 
-#else
-void BulkTypeEventLogger::FireBulkTypeEvent()
-{
-// UNIXTODO: "Eventing Not Implemented"
-}
-#endif //!defined(FEATURE_PAL)
 #ifndef FEATURE_REDHAWK
 
 //---------------------------------------------------------------------------------------
@@ -4225,7 +4272,6 @@ Return Value:
 
 --*/
 
-#if !defined(FEATURE_PAL)
 void InitializeEventTracing()
 {
     CONTRACTL
@@ -4242,6 +4288,7 @@ void InitializeEventTracing()
     if (FAILED(hr))
         return;
 
+#if !defined(FEATURE_PAL)
     // Register CLR providers with the OS
     if (g_pEtwTracer == NULL)
     {
@@ -4249,6 +4296,7 @@ void InitializeEventTracing()
         if (tempEtwTracer != NULL && tempEtwTracer->Register () == ERROR_SUCCESS)
             g_pEtwTracer = tempEtwTracer.Extract ();
     }
+#endif
 
     g_nClrInstanceId = GetRuntimeId() & 0x0000FFFF; // This will give us duplicate ClrInstanceId after UINT16_MAX
 
@@ -4256,6 +4304,8 @@ void InitializeEventTracing()
     // providers can do so now
     ETW::TypeSystemLog::PostRegistrationInit();
 }
+
+#if !defined(FEATURE_PAL)
 HRESULT ETW::CEtwTracer::Register()
 {
     WRAPPER_NO_CONTRACT;
@@ -4286,16 +4336,10 @@ HRESULT ETW::CEtwTracer::Register()
     EventRegisterMicrosoft_Windows_DotNETRuntimeRundown();
 
     // Stress Log ETW events are available only on the desktop version of the runtime
-#ifndef FEATURE_CORECLR
-    EventRegisterMicrosoft_Windows_DotNETRuntimeStress();
-#endif // !FEATURE_CORECLR
 
     MICROSOFT_WINDOWS_DOTNETRUNTIME_PROVIDER_Context.RegistrationHandle = Microsoft_Windows_DotNETRuntimeHandle;
     MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_Context.RegistrationHandle = Microsoft_Windows_DotNETRuntimePrivateHandle;
     MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_Context.RegistrationHandle = Microsoft_Windows_DotNETRuntimeRundownHandle;
-#ifndef FEATURE_CORECLR
-    MICROSOFT_WINDOWS_DOTNETRUNTIME_STRESS_PROVIDER_Context.RegistrationHandle = Microsoft_Windows_DotNETRuntimeStressHandle;
-#endif // !FEATURE_CORECLR
 
     return S_OK;
 }
@@ -4321,9 +4365,6 @@ HRESULT ETW::CEtwTracer::UnRegister()
     EventUnregisterMicrosoft_Windows_DotNETRuntime();
     EventUnregisterMicrosoft_Windows_DotNETRuntimePrivate();
     EventUnregisterMicrosoft_Windows_DotNETRuntimeRundown();
-#ifndef FEATURE_CORECLR
-    EventUnregisterMicrosoft_Windows_DotNETRuntimeStress();
-#endif // !FEATURE_CORECLR
     return S_OK;
 }
 
@@ -4413,11 +4454,17 @@ extern "C"
         PMCGEN_TRACE_CONTEXT context = (PMCGEN_TRACE_CONTEXT)CallbackContext;
 
         BOOLEAN bIsPublicTraceHandle = (context->RegistrationHandle==Microsoft_Windows_DotNETRuntimeHandle);
-        
+
         BOOLEAN bIsPrivateTraceHandle = (context->RegistrationHandle==Microsoft_Windows_DotNETRuntimePrivateHandle);
-        
+
         BOOLEAN bIsRundownTraceHandle = (context->RegistrationHandle==Microsoft_Windows_DotNETRuntimeRundownHandle);
 
+		// TypeSystemLog needs a notification when certain keywords are modified, so
+		// give it a hook here.
+		if (g_fEEStarted && !g_fEEShutDown && bIsPublicTraceHandle)
+		{
+			ETW::TypeSystemLog::OnKeywordsChanged();
+		}
 
         // A manifest based provider can be enabled to multiple event tracing sessions
         // As long as there is atleast 1 enabled session, IsEnabled will be TRUE
@@ -4428,13 +4475,6 @@ extern "C"
              (ControlCode == EVENT_CONTROL_CODE_CAPTURE_STATE));
         if(bEnabled)
         {
-            // TypeSystemLog needs a notification when certain keywords are modified, so
-            // give it a hook here.
-            if (g_fEEStarted && !g_fEEShutDown && bIsPublicTraceHandle)
-            {
-                ETW::TypeSystemLog::OnKeywordsChanged();
-            }
-
             if (bIsPrivateTraceHandle)
             {
                 ETW::GCLog::GCSettingsEvent();
@@ -4502,13 +4542,9 @@ extern "C"
 
     }
 }
-#else
-
-void InitializeEventTracing(){}
-
-#endif // !defined(FEATURE_PAL)
 #endif // FEATURE_REDHAWK
 
+#endif // FEATURE_PAL
 #ifndef FEATURE_REDHAWK
 
 /****************************************************************************/
@@ -4878,11 +4914,7 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
                 g_fEEComActivatedStartup ||      //CLR started as a COM object
                 g_fEEOtherStartup  );            //In case none of the 4 above mentioned cases are true for example ngen, ildasm then we asssume its a "other" startup
 
-#ifdef FEATURE_CORECLR
             Sku = ETW::InfoLog::InfoStructs::CoreCLR;
-#else
-            Sku = ETW::InfoLog::InfoStructs::DesktopCLR;
-#endif //FEATURE_CORECLR
         
             //version info for clr.dll
             USHORT vmMajorVersion = VER_MAJORVERSION;
@@ -4901,30 +4933,6 @@ VOID ETW::InfoLog::RuntimeInformation(INT32 type)
             PCWSTR lpwszCommandLine = W("");
             
 
-#ifndef FEATURE_CORECLR
-            startupFlags = CorHost2::GetStartupFlags();
-
-            // Some of the options specified by the startup flags can be overwritten by config files. 
-            // Strictly speaking since the field in this event is called StartupFlags there's nothing 
-            // wrong with just showing the actual startup flags but it makes it less useful (a more 
-            // appropriate name for the field is StartupOptions).
-            startupFlags &= ~STARTUP_CONCURRENT_GC;
-            if (g_pConfig->GetGCconcurrent())
-                startupFlags |= STARTUP_CONCURRENT_GC;
-
-            if (g_pConfig->DefaultSharePolicy() != AppDomain::SHARE_POLICY_UNSPECIFIED)
-            {
-                startupFlags &= ~STARTUP_LOADER_OPTIMIZATION_MASK;
-                startupFlags |= g_pConfig->DefaultSharePolicy() << 1;
-            }
-
-            startupFlags &= ~STARTUP_LEGACY_IMPERSONATION;
-            startupFlags &= ~STARTUP_ALWAYSFLOW_IMPERSONATION;
-            if (g_pConfig->ImpersonationMode() == IMP_NOFLOW)
-                startupFlags |= STARTUP_LEGACY_IMPERSONATION;
-            else if (g_pConfig->ImpersonationMode() == IMP_ALWAYSFLOW)
-                startupFlags |= STARTUP_ALWAYSFLOW_IMPERSONATION;
-#endif //!FEATURE_CORECLR
 
             // Determine the startupmode
             if(g_fEEIJWStartup)
@@ -5409,9 +5417,6 @@ VOID ETW::MethodLog::MethodTableRestored(MethodTable *pMethodTable)
                                          TRACE_LEVEL_INFORMATION, 
                                          CLR_STARTENUMERATION_KEYWORD))
         {
-#ifdef FEATURE_REMOTING
-            if(!pMethodTable->IsTransparentProxy())
-#endif
             {
                 MethodTable::MethodIterator iter(pMethodTable);
                 for (; iter.IsValid(); iter.Next())
@@ -5432,9 +5437,6 @@ VOID ETW::MethodLog::MethodTableRestored(MethodTable *pMethodTable)
 VOID ETW::SecurityLog::StrongNameVerificationStart(DWORD dwInFlags, __in LPWSTR strFullyQualifiedAssemblyName)
 {
     WRAPPER_NO_CONTRACT;
-#ifndef FEATURE_CORECLR
-    FireEtwStrongNameVerificationStart_V1(dwInFlags, 0, strFullyQualifiedAssemblyName, GetClrInstanceId());
-#endif // !FEATURE_CORECLR
 }
 
 
@@ -5444,9 +5446,6 @@ VOID ETW::SecurityLog::StrongNameVerificationStart(DWORD dwInFlags, __in LPWSTR 
 VOID ETW::SecurityLog::StrongNameVerificationStop(DWORD dwInFlags,ULONG result, __in LPWSTR strFullyQualifiedAssemblyName)
 {
     WRAPPER_NO_CONTRACT;
-#ifndef FEATURE_CORECLR
-    FireEtwStrongNameVerificationStop_V1(dwInFlags, result, strFullyQualifiedAssemblyName, GetClrInstanceId());
-#endif // !FEATURE_CORECLR
 }
 
 /****************************************************************************/
@@ -5787,9 +5786,6 @@ VOID ETW::LoaderLog::SendAssemblyEvent(Assembly *pAssembly, DWORD dwEventOptions
     ULONGLONG ullAssemblyId = (ULONGLONG)pAssembly;
     ULONGLONG ullDomainId = (ULONGLONG)pAssembly->GetDomain();
     ULONGLONG ullBindingID = 0;
-#if (defined FEATURE_PREJIT) && (defined FEATURE_FUSION)  
-    ullBindingID = pAssembly->GetManifestFile()->GetBindingID();
-#endif
     ULONG ulAssemblyFlags = ((bIsDomainNeutral ? ETW::LoaderLog::LoaderStructs::DomainNeutralAssembly : 0) |
                              (bIsDynamicAssembly ? ETW::LoaderLog::LoaderStructs::DynamicAssembly : 0) |
                              (bHasNativeImage ? ETW::LoaderLog::LoaderStructs::NativeAssembly : 0) |
@@ -6805,15 +6801,35 @@ VOID ETW::MethodLog::SendEventsForNgenMethods(Module *pModule, DWORD dwEventOpti
     } CONTRACTL_END;
 
 #ifdef FEATURE_PREJIT
-    if(!pModule || !pModule->HasNativeImage())
+    if (!pModule)
         return;
 
-    MethodIterator mi(pModule);
-
-    while(mi.Next())
+#ifdef FEATURE_READYTORUN
+    if (pModule->IsReadyToRun())
     {
-        MethodDesc *hotDesc = (MethodDesc *)mi.GetMethodDesc();
-        ETW::MethodLog::SendMethodEvent(hotDesc, dwEventOptions, FALSE);
+        ReadyToRunInfo::MethodIterator mi(pModule->GetReadyToRunInfo());
+        while (mi.Next())
+        {
+            // Call GetMethodDesc_NoRestore instead of GetMethodDesc to avoid restoring methods at shutdown.
+            MethodDesc *hotDesc = (MethodDesc *)mi.GetMethodDesc_NoRestore();
+            if (hotDesc != NULL)
+            {
+                ETW::MethodLog::SendMethodEvent(hotDesc, dwEventOptions, FALSE);
+            }
+        }
+
+        return;
+    }
+#endif // FEATURE_READYTORUN
+    if (pModule->HasNativeImage())
+    {
+        MethodIterator mi(pModule);
+
+        while (mi.Next())
+        {
+            MethodDesc *hotDesc = (MethodDesc *)mi.GetMethodDesc();
+            ETW::MethodLog::SendMethodEvent(hotDesc, dwEventOptions, FALSE);
+        }
     }
 #endif // FEATURE_PREJIT
 }
@@ -7388,32 +7404,5 @@ VOID ETW::EnumerationLog::EnumerationHelper(Module *moduleFilter, BaseDomain *do
         }    
     }    
 }
-
-#if defined(FEATURE_EVENTSOURCE_XPLAT)
-
-void QCALLTYPE XplatEventSourceLogger::LogEventSource(__in_z int eventID, __in_z LPCWSTR eventName, __in_z LPCWSTR eventSourceName, __in_z LPCWSTR payload)
-{
-    QCALL_CONTRACT;
-
-    BEGIN_QCALL;
-    FireEtwEventSource(eventID, eventName, eventSourceName, payload);
-    END_QCALL;
-}
-
-BOOL QCALLTYPE XplatEventSourceLogger::IsEventSourceLoggingEnabled()
-{
-    QCALL_CONTRACT;
-
-    BOOL retVal = FALSE;
-
-    BEGIN_QCALL;
-    retVal = XplatEventLogger::IsEventLoggingEnabled();
-    END_QCALL;
-    
-    return retVal;
-
-}
-
-#endif //defined(FEATURE_EVENTSOURCE_XPLAT)
 
 #endif // !FEATURE_REDHAWK

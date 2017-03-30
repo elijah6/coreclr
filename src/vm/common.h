@@ -11,15 +11,6 @@
 #ifndef _common_h_ 
 #define _common_h_
 
-#ifdef CLR_STANDALONE_BINDER
-
-#ifndef CLR_PRIV_BINDER_FOR_MDILBIND
-#include "..\tools\mdilbind\common.h"
-#endif //!CLR_PRIV_BINDER_FOR_MDILBIND
-
-#else //CLR_STANDALONE_BINDER
-
-
 #if defined(_MSC_VER) && defined(_X86_) && !defined(FPO_ON)
 #pragma optimize("y", on)       // Small critical routines, don't put in EBP frame 
 #define FPO_ON 1
@@ -108,9 +99,6 @@
 
 #include "compatibilityflags.h"
 extern BOOL GetCompatibilityFlag(CompatibilityFlag flag);
-#ifndef FEATURE_CORECLR
-extern DWORD* GetGlobalCompatibilityFlags();
-#endif // !FEATURE_CORECLR
 
 #include "strongname.h"
 #include "stdmacros.h"
@@ -186,7 +174,7 @@ typedef DPTR(class StringBufferObject)  PTR_StringBufferObject;
 typedef DPTR(class TypeHandle)          PTR_TypeHandle;
 typedef VPTR(class VirtualCallStubManager) PTR_VirtualCallStubManager;
 typedef VPTR(class VirtualCallStubManagerManager) PTR_VirtualCallStubManagerManager;
-typedef VPTR(class GCHeap)              PTR_GCHeap;
+typedef VPTR(class IGCHeap)             PTR_IGCHeap;
 
 //
 // _UNCHECKED_OBJECTREF is for code that can't deal with DEBUG OBJECTREFs
@@ -375,7 +363,6 @@ namespace Loader
 #include "threads.h"
 #include "clrex.inl"
 #ifdef FEATURE_COMINTEROP
-    // These need to be included *after* threads.h so that they can properly use LeaveRuntimeHolder
     #include "windowsruntime.h"
     #include "windowsstring.h"
 #endif
@@ -396,7 +383,6 @@ namespace Loader
 #include "interoputil.h"
 #include "wrappers.h"
 #include "dynamicmethod.h"
-#include "mixedmode.hpp"
 
 #include "gcstress.h"
 
@@ -408,11 +394,6 @@ inline VOID UnsafeEEEnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
     STATIC_CONTRACT_GC_NOTRIGGER;
     STATIC_CONTRACT_CAN_TAKE_LOCK;
 
-#ifndef FEATURE_CORECLR
-    if (CLRTaskHosted()) {
-        Thread::BeginThreadAffinity();
-    }
-#endif // !FEATURE_CORECLR
     UnsafeEnterCriticalSection(lpCriticalSection);
     INCTHREADLOCKCOUNT();
 }
@@ -424,11 +405,6 @@ inline VOID UnsafeEELeaveCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
 
     UnsafeLeaveCriticalSection(lpCriticalSection);
     DECTHREADLOCKCOUNT();
-#ifndef FEATURE_CORECLR
-    if (CLRTaskHosted()) {
-        Thread::EndThreadAffinity();
-    }
-#endif // !FEATURE_CORECLR
 }
 
 inline BOOL UnsafeEETryEnterCriticalSection(LPCRITICAL_SECTION lpCriticalSection)
@@ -540,8 +516,6 @@ extern INT64 g_PauseTime;          // Total duration of all pauses in the runtim
 extern Volatile<BOOL> g_IsPaused;   // True if the runtime is Paused for FAS
 extern CLREventStatic g_ClrResumeEvent;  // Event fired when the runtime is resumed after a Pause for FAS
 INT64 AdditionalWait(INT64 sPauseTime, INT64 sTime, INT64 expDuration);
-
-#endif // CLR_STANDALONE_BINDER
 
 #endif // !_common_h_
 

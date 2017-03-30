@@ -14,6 +14,18 @@
 #include "common.h"
 #include "gcenv.h"
 
+#ifndef FEATURE_PAL
+#include <Psapi.h>
+#endif
+
+#ifdef Sleep
+#undef Sleep
+#endif // Sleep
+
+#include "env/gcenv.os.h"
+
+#define MAX_PTR ((uint8_t*)(~(ptrdiff_t)0))
+
 // Initialize the interface implementation
 // Return:
 //  true if it has succeeded, false if it has failed
@@ -33,7 +45,7 @@ void GCToOSInterface::Shutdown()
 // current platform. It is indended for logging purposes only.
 // Return:
 //  Numeric id of the current thread or 0 if the 
-uint32_t GCToOSInterface::GetCurrentThreadIdForLogging()
+uint64_t GCToOSInterface::GetCurrentThreadIdForLogging()
 {
     LIMITED_METHOD_CONTRACT;
     return ::GetCurrentThreadId();
@@ -77,7 +89,7 @@ bool GCToOSInterface::SetCurrentThreadIdealAffinity(GCThreadAffinity* affinity)
         if (GetThreadIdealProcessorEx(GetCurrentThread(), &proc))
         {
             proc.Number = (BYTE)affinity->Processor;
-            success = !!SetThreadIdealProcessorEx(GetCurrentThread(), &proc, NULL);
+            success = !!SetThreadIdealProcessorEx(GetCurrentThread(), &proc, &proc);
         }        
     }
 #endif
@@ -154,7 +166,7 @@ void GCToOSInterface::YieldThread(uint32_t switchCount)
 //  flags     - flags to control special settings like write watching
 // Return:
 //  Starting virtual address of the reserved range
-void* GCToOSInterface::VirtualReserve(void* address, size_t size, size_t alignment, uint32_t flags)
+void* GCToOSInterface::VirtualReserve(size_t size, size_t alignment, uint32_t flags)
 {
     LIMITED_METHOD_CONTRACT;
 
@@ -243,7 +255,7 @@ bool GCToOSInterface::SupportsWriteWatch()
     // check if the OS supports write-watch. 
     // Drawbridge does not support write-watch so we still need to do the runtime detection for them.
     // Otherwise, all currently supported OSes do support write-watch.
-    void* mem = VirtualReserve (0, g_SystemInfo.dwAllocationGranularity, 0, VirtualReserveFlags::WriteWatch);
+    void* mem = VirtualReserve (g_SystemInfo.dwAllocationGranularity, 0, VirtualReserveFlags::WriteWatch);
     if (mem != NULL)
     {
         VirtualRelease (mem, g_SystemInfo.dwAllocationGranularity);
@@ -317,7 +329,7 @@ bool GCToOSInterface::GetCurrentProcessAffinityMask(uintptr_t* processMask, uint
 {
     LIMITED_METHOD_CONTRACT;
 
-#ifndef FEATURE_CORECLR
+#ifndef FEATURE_PAL
     return !!::GetProcessAffinityMask(GetCurrentProcess(), (PDWORD_PTR)processMask, (PDWORD_PTR)systemMask);
 #else
     return false;
@@ -334,26 +346,204 @@ uint32_t GCToOSInterface::GetCurrentProcessCpuCount()
     return ::GetCurrentProcessCpuCount();
 }
 
-// Get global memory status
-// Parameters:
-//  ms - pointer to the structure that will be filled in with the memory status
-void GCToOSInterface::GetMemoryStatus(GCMemoryStatus* ms)
+// Return the size of the user-mode portion of the virtual address space of this process.
+// Return:
+//  non zero if it has succeeded, 0 if it has failed
+size_t GCToOSInterface::GetVirtualMemoryLimit()
 {
     LIMITED_METHOD_CONTRACT;
 
-    MEMORYSTATUSEX msEx;
-    msEx.dwLength = sizeof(MEMORYSTATUSEX);
+    MEMORYSTATUSEX memStatus;
+    ::GetProcessMemoryLoad(&memStatus);
 
-    ::GetProcessMemoryLoad(&msEx);
+    return (size_t)memStatus.ullTotalVirtual;
+}
 
-    // Convert Windows struct to abstract struct
-    ms->dwMemoryLoad = msEx.dwMemoryLoad;
-    ms->ullTotalPhys = msEx.ullTotalPhys;
-    ms->ullAvailPhys = msEx.ullAvailPhys;
-    ms->ullTotalPageFile = msEx.ullTotalPageFile;
-    ms->ullAvailPageFile = msEx.ullAvailPageFile;
-    ms->ullTotalVirtual = msEx.ullTotalVirtual;
-    ms->ullAvailVirtual = msEx.ullAvailVirtual;
+
+static size_t g_RestrictedPhysicalMemoryLimit = (size_t)MAX_PTR;
+
+#ifndef FEATURE_PAL
+
+typedef BOOL (WINAPI *PGET_PROCESS_MEMORY_INFO)(HANDLE handle, PROCESS_MEMORY_COUNTERS* memCounters, uint32_t cb);
+static PGET_PROCESS_MEMORY_INFO GCGetProcessMemoryInfo = 0;
+
+typedef BOOL (WINAPI *PIS_PROCESS_IN_JOB)(HANDLE processHandle, HANDLE jobHandle, BOOL* result);
+typedef BOOL (WINAPI *PQUERY_INFORMATION_JOB_OBJECT)(HANDLE jobHandle, JOBOBJECTINFOCLASS jobObjectInfoClass, void* lpJobObjectInfo, DWORD cbJobObjectInfoLength, LPDWORD lpReturnLength);
+
+static size_t GetRestrictedPhysicalMemoryLimit()
+{
+    LIMITED_METHOD_CONTRACT;
+
+    // The limit was cached already
+    if (g_RestrictedPhysicalMemoryLimit != (size_t)MAX_PTR)
+        return g_RestrictedPhysicalMemoryLimit;
+
+    size_t job_physical_memory_limit = (size_t)MAX_PTR;
+    BOOL in_job_p = FALSE;
+    HINSTANCE hinstKernel32 = 0;
+
+    PIS_PROCESS_IN_JOB GCIsProcessInJob = 0;
+    PQUERY_INFORMATION_JOB_OBJECT GCQueryInformationJobObject = 0;
+
+    GCIsProcessInJob = &(::IsProcessInJob);
+
+    if (!GCIsProcessInJob(GetCurrentProcess(), NULL, &in_job_p))
+        goto exit;
+
+    if (in_job_p)
+    {
+        hinstKernel32 = WszLoadLibrary(L"kernel32.dll");
+        if (!hinstKernel32)
+            goto exit;
+
+        GCGetProcessMemoryInfo = (PGET_PROCESS_MEMORY_INFO)GetProcAddress(hinstKernel32, "K32GetProcessMemoryInfo");
+
+        if (!GCGetProcessMemoryInfo)
+            goto exit;
+
+        GCQueryInformationJobObject = &(::QueryInformationJobObject);
+
+        if (!GCQueryInformationJobObject)
+            goto exit;
+
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit_info;
+        if (GCQueryInformationJobObject (NULL, JobObjectExtendedLimitInformation, &limit_info, 
+            sizeof(limit_info), NULL))
+        {
+            size_t job_memory_limit = (size_t)MAX_PTR;
+            size_t job_process_memory_limit = (size_t)MAX_PTR;
+            size_t job_workingset_limit = (size_t)MAX_PTR;
+
+            // Notes on the NT job object:
+            //
+            // You can specific a bigger process commit or working set limit than 
+            // job limit which is pointless so we use the smallest of all 3 as
+            // to calculate our "physical memory load" or "available physical memory"
+            // when running inside a job object, ie, we treat this as the amount of physical memory
+            // our process is allowed to use.
+            // 
+            // The commit limit is already reflected by default when you run in a 
+            // job but the physical memory load is not.
+            //
+            if ((limit_info.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY) != 0)
+                job_memory_limit = limit_info.JobMemoryLimit;
+            if ((limit_info.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PROCESS_MEMORY) != 0)
+                job_process_memory_limit = limit_info.ProcessMemoryLimit;
+            if ((limit_info.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_WORKINGSET) != 0)
+                job_workingset_limit = limit_info.BasicLimitInformation.MaximumWorkingSetSize;
+
+            job_physical_memory_limit = min (job_memory_limit, job_process_memory_limit);
+            job_physical_memory_limit = min (job_physical_memory_limit, job_workingset_limit);
+
+            MEMORYSTATUSEX ms;
+            ::GetProcessMemoryLoad(&ms);
+
+            // A sanity check in case someone set a larger limit than there is actual physical memory.
+            job_physical_memory_limit = (size_t) min (job_physical_memory_limit, ms.ullTotalPhys);
+        }
+    }
+
+exit:
+    if (job_physical_memory_limit == (size_t)MAX_PTR)
+    {
+        job_physical_memory_limit = 0;
+
+        FreeLibrary(hinstKernel32);
+    }
+
+    VolatileStore(&g_RestrictedPhysicalMemoryLimit, job_physical_memory_limit);
+    return g_RestrictedPhysicalMemoryLimit;
+}
+
+#else
+
+static size_t GetRestrictedPhysicalMemoryLimit()
+{
+    LIMITED_METHOD_CONTRACT;
+
+    // The limit was cached already
+    if (g_RestrictedPhysicalMemoryLimit != (size_t)MAX_PTR)
+        return g_RestrictedPhysicalMemoryLimit;
+
+    size_t memory_limit = PAL_GetRestrictedPhysicalMemoryLimit();
+    
+    VolatileStore(&g_RestrictedPhysicalMemoryLimit, memory_limit);
+    return g_RestrictedPhysicalMemoryLimit;
+}
+#endif // FEATURE_PAL
+
+
+// Get the physical memory that this process can use.
+// Return:
+//  non zero if it has succeeded, 0 if it has failed
+uint64_t GCToOSInterface::GetPhysicalMemoryLimit()
+{
+    LIMITED_METHOD_CONTRACT;
+
+    size_t restricted_limit = GetRestrictedPhysicalMemoryLimit();
+    if (restricted_limit != 0)
+        return restricted_limit;
+
+    MEMORYSTATUSEX memStatus;
+    ::GetProcessMemoryLoad(&memStatus);
+
+    return memStatus.ullTotalPhys;
+}
+
+// Get memory status
+// Parameters:
+//  memory_load - A number between 0 and 100 that specifies the approximate percentage of physical memory
+//      that is in use (0 indicates no memory use and 100 indicates full memory use).
+//  available_physical - The amount of physical memory currently available, in bytes.
+//  available_page_file - The maximum amount of memory the current process can commit, in bytes.
+// Remarks:
+//  Any parameter can be null.
+void GCToOSInterface::GetMemoryStatus(uint32_t* memory_load, uint64_t* available_physical, uint64_t* available_page_file)
+{
+    LIMITED_METHOD_CONTRACT;
+
+    uint64_t restricted_limit = GetRestrictedPhysicalMemoryLimit();
+    if (restricted_limit != 0)
+    {
+        size_t workingSetSize;
+        BOOL status = FALSE;
+#ifndef FEATURE_PAL
+        PROCESS_MEMORY_COUNTERS pmc;
+        status = GCGetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc));
+        workingSetSize = pmc.WorkingSetSize;
+#else
+        status = PAL_GetWorkingSetSize(&workingSetSize);
+#endif
+        if(status)
+        {
+            if (memory_load)
+                *memory_load = (uint32_t)((float)workingSetSize * 100.0 / (float)restricted_limit);
+            if (available_physical)
+            {
+                if(workingSetSize > restricted_limit)
+                    *available_physical = 0;
+                else
+                    *available_physical = restricted_limit - workingSetSize;
+            }
+            // Available page file doesn't mean much when physical memory is restricted since
+            // we don't know how much of it is available to this process so we are not going to 
+            // bother to make another OS call for it.
+            if (available_page_file)
+                *available_page_file = 0;
+
+            return;
+        }
+    }
+
+    MEMORYSTATUSEX ms;
+    ::GetProcessMemoryLoad(&ms);
+
+    if (memory_load != NULL)
+        *memory_load = ms.dwMemoryLoad;
+    if (available_physical != NULL)
+        *available_physical = ms.ullAvailPhys;
+    if (available_page_file != NULL)
+        *available_page_file = ms.ullAvailPageFile;
 }
 
 // Get a high precision performance counter
@@ -410,7 +600,7 @@ struct GCThreadStubParam
 };
 
 // GC thread stub to convert GC thread function to an OS specific thread function
-static DWORD GCThreadStub(void* param)
+static DWORD WINAPI GCThreadStub(void* param)
 {
     WRAPPER_NO_CONTRACT;
 
@@ -458,24 +648,24 @@ bool GCToOSInterface::CreateThread(GCThreadFunction function, void* param, GCThr
 
     SetThreadPriority(gc_thread, /* THREAD_PRIORITY_ABOVE_NORMAL );*/ THREAD_PRIORITY_HIGHEST );
 
-#ifndef FEATURE_CORECLR
-    if (affinity->Group != -1)
+#ifndef FEATURE_PAL
+    if (affinity->Group != GCThreadAffinity::None)
     {
-        _ASSERTE(affinity->Processor != -1);
+        _ASSERTE(affinity->Processor != GCThreadAffinity::None);
         GROUP_AFFINITY ga;
         ga.Group = (WORD)affinity->Group;
         ga.Reserved[0] = 0; // reserve must be filled with zero
         ga.Reserved[1] = 0; // otherwise call may fail
         ga.Reserved[2] = 0;
-        ga.Mask = 1 << affinity->Processor;
+        ga.Mask = (size_t)1 << affinity->Processor;
 
         CPUGroupInfo::SetThreadGroupAffinity(gc_thread, &ga, NULL);
     }
-    else if (affinity->Processor != -1)
+    else if (affinity->Processor != GCThreadAffinity::None)
     {
-        SetThreadAffinityMask(gc_thread, 1 << affinity->Processor);
+        SetThreadAffinityMask(gc_thread, (DWORD_PTR)1 << affinity->Processor);
     }
-#endif // !FEATURE_CORECLR
+#endif // !FEATURE_PAL
 
     ResumeThread(gc_thread);
     CloseHandle(gc_thread);
@@ -510,4 +700,3 @@ void CLRCriticalSection::Leave()
     WRAPPER_NO_CONTRACT;
     UnsafeLeaveCriticalSection(&m_cs);
 }
-

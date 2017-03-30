@@ -4,6 +4,7 @@
 
 using System.Collections.Generic;
 using System.Collections;
+using System.Diagnostics;
 
 #if !ES_BUILD_AGAINST_DOTNET_V35
 using Contract = System.Diagnostics.Contracts.Contract;
@@ -24,9 +25,9 @@ namespace System.Diagnostics.Tracing
     /// </summary>
     internal class EventPayload : IDictionary<string, object>
     {
-        internal EventPayload(List<string> payloadNames, List<object> payloadValues) 
+        internal EventPayload(List<string> payloadNames, List<object> payloadValues)
         {
-            Contract.Assert(payloadNames.Count == payloadValues.Count);
+            Debug.Assert(payloadNames.Count == payloadValues.Count);
 
             m_names = payloadNames;
             m_values = payloadValues;
@@ -40,11 +41,11 @@ namespace System.Diagnostics.Tracing
             get
             {
                 if (key == null)
-                    throw new System.ArgumentNullException("key");
+                    throw new System.ArgumentNullException(nameof(key));
 
                 int position = 0;
-                foreach(var name in m_names)
-                { 
+                foreach (var name in m_names)
+                {
                     if (name == key)
                     {
                         return m_values[position];
@@ -83,7 +84,7 @@ namespace System.Diagnostics.Tracing
         public bool ContainsKey(string key)
         {
             if (key == null)
-                throw new System.ArgumentNullException("key");
+                throw new System.ArgumentNullException(nameof(key));
 
             foreach (var item in m_names)
             {
@@ -101,7 +102,7 @@ namespace System.Diagnostics.Tracing
         {
             for (int i = 0; i < Keys.Count; i++)
             {
-                yield return new KeyValuePair<string, object>(this.m_names[i], this.m_values[i]);
+                yield return new KeyValuePair<string, object>(m_names[i], m_values[i]);
             }
         }
 
@@ -115,7 +116,7 @@ namespace System.Diagnostics.Tracing
         {
             throw new System.NotSupportedException();
         }
-       
+
         public bool Remove(string key)
         {
             throw new System.NotSupportedException();
@@ -125,18 +126,18 @@ namespace System.Diagnostics.Tracing
         {
             throw new System.NotSupportedException();
         }
-       
+
         public bool TryGetValue(string key, out object value)
         {
             if (key == null)
-                throw new System.ArgumentNullException("key");
+                throw new System.ArgumentNullException(nameof(key));
 
             int position = 0;
             foreach (var name in m_names)
             {
                 if (name == key)
                 {
-                    value =  m_values[position];
+                    value = m_values[position];
                     return true;
                 }
                 position++;
