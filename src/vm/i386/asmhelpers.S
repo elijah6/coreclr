@@ -359,12 +359,30 @@ LEAF_ENTRY HelperMethodFrameRestoreState, _TEXT
 
 #ifdef _DEBUG
     jnz         LOCAL_LABEL(noConfirm)
-    push        ebp
+
+    mov         eax, ebp
+
+    // Create a minimal EBP-frame (for clean stack trace under debugger)
+    PROLOG_BEG
+    PROLOG_END
+
+    // Call HelperMethodFrameConfirmState (with stack alignment padding)
+    #define STACK_ALIGN_PADDING 4
+    sub         esp, STACK_ALIGN_PADDING
+    push        eax     // eax = ebp
     push        ebx
     push        edi
     push        esi
     push        ecx     // HelperFrame*
+    CHECK_STACK_ALIGNMENT
     call        C_FUNC(HelperMethodFrameConfirmState)
+    add         esp, STACK_ALIGN_PADDING
+    #undef STACK_ALIGN_PADDING
+
+    // Restore EBP
+    EPILOG_BEG
+    EPILOG_END
+
     // on return, eax = MachState*
     cmp         DWORD PTR [eax + MachState__pRetAddr], 0
 LOCAL_LABEL(noConfirm):
@@ -799,15 +817,18 @@ NESTED_ENTRY DelayLoad_MethodCall, _TEXT, NoHandler
 
     mov         esi, esp
 
+    #define STACK_ALIGN_PADDING 4
+    sub         esp, STACK_ALIGN_PADDING
+
     push        ecx
     push        edx
-
     push        eax
-
-    // pTransitionBlock
-    push        esi
-
+    push        esi // pTransitionBlock
+    CHECK_STACK_ALIGNMENT
     call        C_FUNC(ExternalMethodFixupWorker)
+
+    add         esp, STACK_ALIGN_PADDING
+    #undef STACK_ALIGN_PADDING
 
     // eax now contains replacement stub. PreStubWorker will never return
     // NULL (it throws an exception if stub creation fails.)
@@ -966,6 +987,14 @@ DYNAMICHELPER (DynamicHelperFrameFlags_ObjectArg | DynamicHelperFrameFlags_Objec
 
 #endif // FEATURE_READYTORUN
 
+//
+// Entry stack:
+//    dispatch token
+//    siteAddrForRegisterIndirect (used only if this is a RegisterIndirect dispatch call)
+//    return address of caller to stub
+//
+// Please see vm/i386/virtualcallstubcpu.hpp for details
+//
 NESTED_ENTRY ResolveWorkerAsmStub, _TEXT, NoHandler
     //
     // The stub arguments are where we want to setup the TransitionBlock. We will
@@ -987,32 +1016,40 @@ NESTED_ENTRY ResolveWorkerAsmStub, _TEXT, NoHandler
 
     mov         esi, esp
 
+    #define STACK_ALIGN_PADDING 8
+
+    sub         esp, STACK_ALIGN_PADDING
     push        [esi + 4*4]     // dispatch token
     push        [esi + 5*4]     // siteAddrForRegisterIndirect
     push        esi             // pTransitionBlock
 
     // Setup up proper EBP frame now that the stub arguments can be trashed
-    mov         [esi + 4*4],ebx
-    mov         [esi + 5*4],ebp
+    mov         [esi + 4*4], ebx
+    mov         [esi + 5*4], ebp
     lea         ebp, [esi + 5*4]
 
     // Make the call
+    CHECK_STACK_ALIGNMENT
     call        C_FUNC(VSD_ResolveWorker)
+
+    add         esp, STACK_ALIGN_PADDING
+
+    #undef STACK_ALIGN_PADDING
 
     // From here on, mustn't trash eax
 
     // pop ArgumentRegisters
-    pop     edx
-    pop     ecx
+    pop         edx
+    pop         ecx
 
     // pop CalleeSavedRegisters
-    pop edi
-    pop esi
-    pop ebx
-    pop ebp
+    pop         edi
+    pop         esi
+    pop         ebx
+    pop         ebp
 
     // Now jump to the target
-    jmp     eax             // continue on into the method
+    jmp         eax // continue on into the method
 NESTED_END ResolveWorkerAsmStub, _TEXT
 
 #ifdef FEATURE_STUBS_AS_IL
@@ -1101,10 +1138,18 @@ LOCAL_LABEL(main_loop):
     // be quick to reset the counter so we don't get a bunch of contending threads
     mov     dword ptr [edx], CALL_STUB_CACHE_INITIAL_SUCCESS_COUNT
 
+    #define STACK_ALIGN_PADDING 12
+    sub     esp, STACK_ALIGN_PADDING
+
     // promote the entry to the beginning of the chain
     mov     ecx, eax
+
+    CHECK_STACK_ALIGNMENT
     // call C_FUNC(VirtualCallStubManager::PromoteChainEntry)
     call    C_FUNC(_ZN22VirtualCallStubManager17PromoteChainEntryEP16ResolveCacheElem)
+
+    add     esp, STACK_ALIGN_PADDING
+    #undef  STACK_ALIGN_PADDING
 
 LOCAL_LABEL(nopromote):
 
@@ -1132,12 +1177,28 @@ NESTED_ENTRY BackPatchWorkerAsmStub, _TEXT, NoHandler
     PROLOG_PUSH edx
     PROLOG_END
 
-    sub     esp, 4     //  for 16 bytes align
-    push    eax        //  push any indirect call address as the second arg to BackPatchWorker
-    push    [ebp+8]    //  and push return address as the first arg to BackPatchWorker
+    // Call BackPatchWorkerStaticStub
+    //
+    // Here is expected stack layout at this point:
+    //  | saved edx |
+    //  | saved ecx |
+    //  | saved eax |
+    //  +-----------+ <- ebp
+    //  | saved ebp |
+    //  | saved eip |
+    //  +-----------+ <- CFA of BackPatchWorkerAsmStub
+    //  | saved eip |
+    //  +-----------+ <- CFA of ResolveStub (16-byte aligned)
+    // (Please refer to ResolveStub in vm/i386/virtualcallstubcpu.hpp for details)
+    //
+    push    eax                       //  any indirect call address as the 2nd arg
+    push    DWORD PTR [ebp + 8]       //  return address (of ResolveStub) as the 1st arg
 
+    CHECK_STACK_ALIGNMENT
     call    C_FUNC(BackPatchWorkerStaticStub)
-    add     esp, 12
+
+    // Clean up arguments and alignment padding
+    add     esp, 2*4
 
     EPILOG_BEG
     EPILOG_POP edx

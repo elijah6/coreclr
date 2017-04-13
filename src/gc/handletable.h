@@ -177,8 +177,11 @@ BOOL HndFirstAssignHandle(OBJECTHANDLE handle, OBJECTREF objref);
 
 /*
  * inline handle dereferencing
+ *
+ * NOTE: Changes to this implementation should be kept in sync with ObjectFromHandle
+ *       on the VM side.
+ *
  */
-
 FORCEINLINE OBJECTREF HndFetchHandle(OBJECTHANDLE handle)
 {
     WRAPPER_NO_CONTRACT;
@@ -210,18 +213,6 @@ FORCEINLINE BOOL HndIsNull(OBJECTHANDLE handle)
     _ASSERTE(handle);
 
     return NULL == *(Object **)handle;
-}
-
-
-
-/*
- * inline handle checking
- */
-FORCEINLINE BOOL HndCheckForNullUnchecked(OBJECTHANDLE handle)
-{
-    LIMITED_METHOD_CONTRACT;
-
-    return (handle == NULL || (*(_UNCHECKED_OBJECTREF *)handle) == NULL);
 }
 
 

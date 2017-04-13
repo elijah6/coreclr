@@ -947,12 +947,14 @@ AssertionIndex Compiler::optCreateAssertion(GenTreePtr       op1,
             while (vnStore->GetVNFunc(vn, &funcAttr) && (funcAttr.m_func == (VNFunc)GT_ADD) &&
                    (vnStore->TypeOfVN(vn) == TYP_BYREF))
             {
-                if (vnStore->IsVNConstant(funcAttr.m_args[1]))
+                if (vnStore->IsVNConstant(funcAttr.m_args[1]) &&
+                    varTypeIsIntegral(vnStore->TypeOfVN(funcAttr.m_args[1])))
                 {
                     offset += vnStore->CoercedConstantValue<ssize_t>(funcAttr.m_args[1]);
                     vn = funcAttr.m_args[0];
                 }
-                else if (vnStore->IsVNConstant(funcAttr.m_args[0]))
+                else if (vnStore->IsVNConstant(funcAttr.m_args[0]) &&
+                         varTypeIsIntegral(vnStore->TypeOfVN(funcAttr.m_args[0])))
                 {
                     offset += vnStore->CoercedConstantValue<ssize_t>(funcAttr.m_args[0]);
                     vn = funcAttr.m_args[1];
@@ -2436,11 +2438,9 @@ GenTreePtr Compiler::optVNConstantPropOnTree(BasicBlock* block, GenTreePtr stmt,
 #ifdef _TARGET_64BIT_
             if (vnStore->IsVNHandle(vnCns))
             {
-#ifdef RELOC_SUPPORT
                 // Don't perform constant folding that involves a handle that needs
                 // to be recorded as a relocation with the VM.
                 if (!opts.compReloc)
-#endif
                 {
                     newTree           = gtNewIconHandleNode(value, vnStore->GetHandleFlags(vnCns));
                     newTree->gtVNPair = ValueNumPair(vnLib, vnCns);
@@ -2509,11 +2509,9 @@ GenTreePtr Compiler::optVNConstantPropOnTree(BasicBlock* block, GenTreePtr stmt,
 #ifndef _TARGET_64BIT_
             if (vnStore->IsVNHandle(vnCns))
             {
-#ifdef RELOC_SUPPORT
                 // Don't perform constant folding that involves a handle that needs
                 // to be recorded as a relocation with the VM.
                 if (!opts.compReloc)
-#endif
                 {
                     newTree           = gtNewIconHandleNode(value, vnStore->GetHandleFlags(vnCns));
                     newTree->gtVNPair = ValueNumPair(vnLib, vnCns);

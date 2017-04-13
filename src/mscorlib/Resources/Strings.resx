@@ -679,7 +679,7 @@
   <data name="Arg_SecurityException" xml:space="preserve">
     <value>Security error.</value>
   </data>
-  <data name="Arg_SerializationException" xml:space="preserve">
+  <data name="SerializationException" xml:space="preserve">
     <value>Serialization error.</value>
   </data>
   <data name="Arg_SetMethNotFnd" xml:space="preserve">
@@ -3557,4 +3557,55 @@
   <data name="Word_At" xml:space="preserve">
     <value>at</value>
   </data>
-  </root>
+  <data name="DebugAssertBanner" xml:space="preserve">
+    <value>---- DEBUG ASSERTION FAILED ----</value>
+  </data>
+  <data name="DebugAssertLongMessage" xml:space="preserve">
+    <value>---- Assert Long Message ----</value>
+  </data>
+  <data name="DebugAssertShortMessage" xml:space="preserve">
+    <value>---- Assert Short Message ----</value>
+  </data>
+  <data name="LockRecursionException_ReadAfterWriteNotAllowed" xml:space="preserve">
+    <value>A read lock may not be acquired with the write lock held in this mode.</value>
+  </data>
+  <data name="LockRecursionException_RecursiveReadNotAllowed" xml:space="preserve">
+    <value>Recursive read lock acquisitions not allowed in this mode.</value>
+  </data>
+  <data name="LockRecursionException_RecursiveWriteNotAllowed" xml:space="preserve">
+    <value>Recursive write lock acquisitions not allowed in this mode.</value>
+  </data>
+  <data name="LockRecursionException_ReadAfterWriteNotAllowed" xml:space="preserve">
+    <value>A read lock may not be acquired with the write lock held in this mode.</value>
+  </data>
+  <data name="LockRecursionException_RecursiveUpgradeNotAllowed" xml:space="preserve">
+    <value>Recursive upgradeable lock acquisitions not allowed in this mode.</value>
+  </data>
+  <data name="LockRecursionException_RecursiveReadNotAllowed" xml:space="preserve">
+    <value>Recursive read lock acquisitions not allowed in this mode.</value>
+  </data>
+  <data name="LockRecursionException_WriteAfterReadNotAllowed" xml:space="preserve">
+    <value>Write lock may not be acquired with read lock held. This pattern is prone to deadlocks. Please ensure that read locks are released before taking a write lock. If an upgrade is necessary, use an upgrade lock in place of the read lock.</value>
+  </data>
+  <data name="LockRecursionException_WriteAfterReadNotAllowed" xml:space="preserve">
+    <value>Write lock may not be acquired with read lock held. This pattern is prone to deadlocks. Please ensure that read locks are released before taking a write lock. If an upgrade is necessary, use an upgrade lock in place of the read lock.</value>
+  </data>
+  <data name="SynchronizationLockException_MisMatchedUpgrade" xml:space="preserve">
+    <value>The upgradeable lock is being released without being held.</value>
+  </data>
+  <data name="SynchronizationLockException_MisMatchedRead" xml:space="preserve">
+    <value>The read lock is being released without being held.</value>
+  </data>
+  <data name="SynchronizationLockException_IncorrectDispose" xml:space="preserve">
+    <value>The lock is being disposed while still being used. It either is being held by a thread and/or has active waiters waiting to acquire the lock.</value>
+  </data>
+  <data name="LockRecursionException_UpgradeAfterReadNotAllowed" xml:space="preserve">
+    <value>Upgradeable lock may not be acquired with read lock held.</value>
+  </data>
+  <data name="LockRecursionException_UpgradeAfterWriteNotAllowed" xml:space="preserve">
+    <value>Upgradeable lock may not be acquired with write lock held in this mode. Acquiring Upgradeable lock gives the ability to read along with an option to upgrade to a writer.</value>
+  </data>
+  <data name="SynchronizationLockException_MisMatchedWrite" xml:space="preserve">
+    <value>The write lock is being released without being held.</value>
+  </data>
+</root>

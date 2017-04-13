@@ -3891,10 +3891,10 @@ public:
     {
         assert (size >= free_object_base_size);
 
-        assert (g_pFreeObjectMethodTable->GetBaseSize() == free_object_base_size);
-        assert (g_pFreeObjectMethodTable->RawGetComponentSize() == 1);
+        assert (g_gc_pFreeObjectMethodTable->GetBaseSize() == free_object_base_size);
+        assert (g_gc_pFreeObjectMethodTable->RawGetComponentSize() == 1);
 
-        RawSetMethodTable( g_pFreeObjectMethodTable );
+        RawSetMethodTable( g_gc_pFreeObjectMethodTable );
 
         size_t* numComponentsPtr = (size_t*) &((uint8_t*) this)[ArrayBase::GetOffsetOfNumComponents()];
         *numComponentsPtr = size - free_object_base_size;
@@ -3919,7 +3919,7 @@ public:
 
     BOOL IsFree () const
     {
-        return (GetMethodTable() == g_pFreeObjectMethodTable);
+        return (GetMethodTable() == g_gc_pFreeObjectMethodTable);
     }
 
 #ifdef FEATURE_STRUCTALIGN
@@ -15136,26 +15136,21 @@ exit:
         }
     }
 
-#ifndef FEATURE_REDHAWK
-    if (n == max_generation)
+    if (n == max_generation && GCToEEInterface::ForceFullGCToBeBlocking())
     {
-        if (SystemDomain::System()->RequireAppDomainCleanup())
-        {
 #ifdef BACKGROUND_GC
-            // do not turn stress-induced collections into blocking GCs, unless there
-            // have already been more full BGCs than full NGCs
+        // do not turn stress-induced collections into blocking GCs, unless there
+        // have already been more full BGCs than full NGCs
 #if 0
-            // This exposes DevDiv 94129, so we'll leave this out for now
-            if (!settings.stress_induced || 
-                full_gc_counts[gc_type_blocking] <= full_gc_counts[gc_type_background])
+        // This exposes DevDiv 94129, so we'll leave this out for now
+        if (!settings.stress_induced ||
+            full_gc_counts[gc_type_blocking] <= full_gc_counts[gc_type_background])
 #endif // 0
 #endif // BACKGROUND_GC
-            {
-                *blocking_collection_p = TRUE;
-            }
+        {
+            *blocking_collection_p = TRUE;
         }
     }
-#endif //!FEATURE_REDHAWK
 
     return n;
 }
@@ -21095,7 +21090,7 @@ BOOL gc_heap::plan_loh()
         {
             while (o < heap_segment_allocated (seg) && !marked (o))
             {
-                dprintf (1235, ("%Ix(%Id) F (%d)", o, AlignQword (size (o)), ((method_table (o) == g_pFreeObjectMethodTable) ? 1 : 0)));
+                dprintf (1235, ("%Ix(%Id) F (%d)", o, AlignQword (size (o)), ((method_table (o) == g_gc_pFreeObjectMethodTable) ? 1 : 0)));
                 o = o + AlignQword (size (o));
             }
         }
@@ -24351,7 +24346,7 @@ void gc_heap::walk_survivors_for_bgc (void* profiling_context, record_surv_fn fn
 
         while (o < end)
         {
-            if (method_table(o) == g_pFreeObjectMethodTable)
+            if (method_table(o) == g_gc_pFreeObjectMethodTable)
             {
                 o += Align (size (o), align_const);
                 continue;
@@ -24362,7 +24357,7 @@ void gc_heap::walk_survivors_for_bgc (void* profiling_context, record_surv_fn fn
 
             uint8_t* plug_start = o;
 
-            while (method_table(o) != g_pFreeObjectMethodTable)
+            while (method_table(o) != g_gc_pFreeObjectMethodTable)
             {
                 o += Align (size (o), align_const);
                 if (o >= end)
@@ -31548,7 +31543,7 @@ void gc_heap::background_sweep()
                     seg = start_seg;
                     prev_seg = 0;
                     o = generation_allocation_start (gen);
-                    assert (method_table (o) == g_pFreeObjectMethodTable);
+                    assert (method_table (o) == g_gc_pFreeObjectMethodTable);
                     align_const = get_alignment_constant (FALSE);
                     o = o + Align(size (o), align_const);
                     plug_end = o;
@@ -32890,7 +32885,7 @@ void gc_heap::verify_partial ()
                             //dprintf (3, ("VOM: verifying member %Ix in obj %Ix", (size_t)*oo, o));
                             MethodTable *pMT = method_table (*oo);
 
-                            if (pMT == g_pFreeObjectMethodTable)
+                            if (pMT == g_gc_pFreeObjectMethodTable)
                             {
                                 free_ref_p = TRUE;
                                 FATAL_GC_ERROR();
@@ -33324,12 +33319,12 @@ gc_heap::verify_heap (BOOL begin_gc_p)
             }
         }
 
-        if (*((uint8_t**)curr_object) != (uint8_t *) g_pFreeObjectMethodTable)
+        if (*((uint8_t**)curr_object) != (uint8_t *) g_gc_pFreeObjectMethodTable)
         {
 #ifdef FEATURE_LOH_COMPACTION
             if ((curr_gen_num == (max_generation+1)) && (prev_object != 0))
             {
-                assert (method_table (prev_object) == g_pFreeObjectMethodTable);
+                assert (method_table (prev_object) == g_gc_pFreeObjectMethodTable);
             }
 #endif //FEATURE_LOH_COMPACTION
 
@@ -33501,6 +33496,7 @@ void GCHeap::ValidateObjectMember (Object* obj)
                                     {
                                         dprintf (3, ("VOM: m: %Ix obj %Ix", (size_t)child_o, o));
                                         MethodTable *pMT = method_table (child_o);
+                                        assert(pMT);
                                         if (!pMT->SanityCheck()) {
                                             dprintf (3, ("Bad member of %Ix %Ix",
                                                         (size_t)oo, (size_t)child_o));
@@ -33633,6 +33629,8 @@ HRESULT GCHeap::Initialize ()
     {
         return E_FAIL;
     }
+
+    g_gc_pFreeObjectMethodTable = GCToEEInterface::GetFreeObjectMethodTable();
 
 //Initialize the static members.
 #ifdef TRACE_GC
@@ -34206,11 +34204,11 @@ bool GCHeap::StressHeap(gc_alloc_context * context)
         StringObject* str;
 
         // If the current string is used up
-        if (ObjectFromHandle(m_StressObjs[m_CurStressObj]) == 0)
+        if (HndFetchHandle(m_StressObjs[m_CurStressObj]) == 0)
         {
             // Populate handles with strings
             int i = m_CurStressObj;
-            while(ObjectFromHandle(m_StressObjs[i]) == 0)
+            while(HndFetchHandle(m_StressObjs[i]) == 0)
             {
                 _ASSERTE(m_StressObjs[i] != 0);
                 unsigned strLen = (LARGE_OBJECT_SIZE - 32) / sizeof(WCHAR);
@@ -34242,7 +34240,7 @@ bool GCHeap::StressHeap(gc_alloc_context * context)
         }
 
         // Get the current string
-        str = (StringObject*) OBJECTREFToObject(ObjectFromHandle(m_StressObjs[m_CurStressObj]));
+        str = (StringObject*) OBJECTREFToObject(HndFetchHandle(m_StressObjs[m_CurStressObj]));
         if (str)
         {
             // Chop off the end of the string and form a new object out of it.
@@ -36101,43 +36099,15 @@ CFinalize::FinalizeSegForAppDomain (AppDomain *pDomain,
         // if it has the index we are looking for. If the methodtable is null, it can't be from the
         // unloading domain, so skip it.
         if (method_table(obj) == NULL)
-            continue;
-
-        // eagerly finalize all objects except those that may be agile.
-        if (obj->GetAppDomainIndex() != pDomain->GetIndex())
-            continue;
-
-#ifndef FEATURE_REDHAWK
-        if (method_table(obj)->IsAgileAndFinalizable())
         {
-            // If an object is both agile & finalizable, we leave it in the
-            // finalization queue during unload.  This is OK, since it's agile.
-            // Right now only threads can be this way, so if that ever changes, change
-            // the assert to just continue if not a thread.
-            _ASSERTE(method_table(obj) == g_pThreadClass);
-
-            if (method_table(obj) == g_pThreadClass)
-            {
-                // However, an unstarted thread should be finalized. It could be holding a delegate
-                // in the domain we want to unload. Once the thread has been started, its
-                // delegate is cleared so only unstarted threads are a problem.
-                Thread *pThread = ((THREADBASEREF)ObjectToOBJECTREF(obj))->GetInternal();
-                if (! pThread || ! pThread->IsUnstarted())
-                {
-                    // This appdomain is going to be gone soon so let us assign
-                    // it the appdomain that's guaranteed to exist
-                    // The object is agile and the delegate should be null so we can do it
-                    obj->GetHeader()->ResetAppDomainIndexNoFailure(SystemDomain::System()->DefaultDomain()->GetIndex());
-                    continue;
-                }
-            }
-            else
-            {
-                obj->GetHeader()->ResetAppDomainIndexNoFailure(SystemDomain::System()->DefaultDomain()->GetIndex());
-                continue;
-            }
+            continue;
         }
-#endif //!FEATURE_REDHAWK
+
+        // does the EE actually want us to finalize this object?
+        if (!GCToEEInterface::ShouldFinalizeObjectForUnload(pDomain, obj))
+        {
+            continue;
+        }
 
         if (!fRunFinalizers || (obj->GetHeader()->GetBits()) & BIT_SBLK_FINALIZER_RUN)
         {
@@ -36296,16 +36266,11 @@ CFinalize::ScanForFinalization (promote_func* pfn, int gen, BOOL mark_only_p,
 
                     assert (method_table(obj)->HasFinalizer());
 
-#ifndef FEATURE_REDHAWK
-                    if (method_table(obj) == pWeakReferenceMT || method_table(obj)->GetCanonicalMethodTable() == pWeakReferenceOfTCanonMT)
+                    if (GCToEEInterface::EagerFinalized(obj))
                     {
-                        //destruct the handle right there.
-                        FinalizeWeakReference (obj);
                         MoveItem (i, Seg, FreeList);
                     }
-                    else
-#endif //!FEATURE_REDHAWK
-                    if ((obj->GetHeader()->GetBits()) & BIT_SBLK_FINALIZER_RUN)
+                    else if ((obj->GetHeader()->GetBits()) & BIT_SBLK_FINALIZER_RUN)
                     {
                         //remove the object because we don't want to
                         //run the finalizer
@@ -36945,10 +36910,7 @@ void PopulateDacVars(GcDacVars *gcDacVars)
     gcDacVars->build_variant = &g_build_variant;
     gcDacVars->gc_structures_invalid_cnt = const_cast<int32_t*>(&GCScan::m_GcStructuresInvalidCnt);
     gcDacVars->generation_size = sizeof(generation);
-#ifdef FEATURE_SVR_GC
-    gcDacVars->gc_heap_type = &IGCHeap::gcHeapType;
-#endif // FEATURE_SVR_GC
-    gcDacVars->max_gen = &IGCHeap::maxGeneration;
+    gcDacVars->max_gen = &g_max_generation;
 #ifndef MULTIPLE_HEAPS
     gcDacVars->mark_array = &gc_heap::mark_array;
     gcDacVars->ephemeral_heap_segment = reinterpret_cast<dac_heap_segment**>(&gc_heap::ephemeral_heap_segment);

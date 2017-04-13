@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.Runtime.Serialization;
 using System.Runtime.CompilerServices;
@@ -479,7 +480,7 @@ namespace System.Reflection
         public override Object[] GetCustomAttributes(bool inherit)
         {
             if (MdToken.IsNullToken(m_tkParamDef))
-                return EmptyArray<Object>.Value;
+                return Array.Empty<Object>();
 
             return CustomAttribute.GetCustomAttributes(this, typeof(object) as RuntimeType);
         }
@@ -491,7 +492,7 @@ namespace System.Reflection
             Contract.EndContractBlock();
 
             if (MdToken.IsNullToken(m_tkParamDef))
-                return EmptyArray<Object>.Value;
+                return Array.Empty<Object>();
 
             RuntimeType attributeRuntimeType = attributeType.UnderlyingSystemType as RuntimeType;
 

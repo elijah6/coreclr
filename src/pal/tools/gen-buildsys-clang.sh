@@ -139,15 +139,30 @@ if [[ -n "$CROSSCOMPILE" ]]; then
     fi
     cmake_extra_defines="$cmake_extra_defines -C $CONFIG_DIR/tryrun.cmake"
     cmake_extra_defines="$cmake_extra_defines -DCMAKE_TOOLCHAIN_FILE=$CONFIG_DIR/toolchain.cmake"
+    cmake_extra_defines="$cmake_extra_defines -DCLR_UNIX_CROSS_BUILD=1"
+fi
+if [ $OS == "Linux" ]; then
+    linux_id_file="/etc/os-release"
+    if [[ -n "$CROSSCOMPILE" ]]; then
+        linux_id_file="$ROOTFS_DIR/$linux_id_file"
+    fi
+    if [[ -e $linux_id_file ]]; then
+        source $linux_id_file
+        cmake_extra_defines="$cmake_extra_defines -DCLR_CMAKE_LINUX_ID=$ID"
+    fi
 fi
 if [ "$build_arch" == "armel" ]; then
     cmake_extra_defines="$cmake_extra_defines -DARM_SOFTFP=1"
 fi
 
-if [ "$build_arch" == "arm" -o "$build_arch" == "armel" ]; then
-    overridefile=clang-compiler-override-arm.txt  
+clang_version=$(echo $CC | awk -F- '{ print $NF }')
+# Use O1 option when the clang version is smaller than 3.9
+# Otherwise use O3 option in release build
+if [[ ( ${clang_version%.*} -eq 3  &&  ${clang_version#*.} -lt 9 ) &&
+      (  "$build_arch" == "arm" || "$build_arch" == "armel" ) ]]; then
+    overridefile=clang-compiler-override-arm.txt
 else
-    overridefile=clang-compiler-override.txt  
+    overridefile=clang-compiler-override.txt
 fi
 
 cmake \

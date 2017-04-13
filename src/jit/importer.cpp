@@ -350,6 +350,12 @@ StackEntry& Compiler::impStackTop(unsigned n)
 
     return verCurrentState.esStack[verCurrentState.esStackDepth - n - 1];
 }
+
+unsigned Compiler::impStackHeight()
+{
+    return verCurrentState.esStackDepth;
+}
+
 /*****************************************************************************
  *  Some of the trees are spilled specially. While unspilling them, or
  *  making a copy, these need to be handled specially. The function
@@ -1875,9 +1881,7 @@ GenTreePtr Compiler::impMethodPointer(CORINFO_RESOLVED_TOKEN* pResolvedToken, CO
 #ifdef FEATURE_READYTORUN_COMPILER
             if (opts.IsReadyToRun())
             {
-                op1->gtFptrVal.gtEntryPoint          = pCallInfo->codePointerLookup.constLookup;
-                op1->gtFptrVal.gtLdftnResolvedToken  = new (this, CMK_Unknown) CORINFO_RESOLVED_TOKEN;
-                *op1->gtFptrVal.gtLdftnResolvedToken = *pResolvedToken;
+                op1->gtFptrVal.gtEntryPoint = pCallInfo->codePointerLookup.constLookup;
             }
             else
             {
@@ -2588,6 +2592,21 @@ inline IL_OFFSETX Compiler::impCurILOffset(IL_OFFSET offs, bool callInstruction)
         IL_OFFSETX callInstructionBit = callInstruction ? IL_OFFSETX_CALLINSTRUCTIONBIT : 0;
         return offs | stkBit | callInstructionBit;
     }
+}
+
+//------------------------------------------------------------------------
+// impCanSpillNow: check is it possible to spill all values from eeStack to local variables.
+//
+// Arguments:
+//    prevOpcode - last importer opcode
+//
+// Return Value:
+//    true if it is legal, false if it could be a sequence that we do not want to divide.
+bool Compiler::impCanSpillNow(OPCODE prevOpcode)
+{
+    // Don't spill after ldtoken, because it could be a part of the InitializeArray sequence.
+    // Avoid breaking up to guarantee that impInitializeArrayIntrinsic can succeed.
+    return prevOpcode != CEE_LDTOKEN;
 }
 
 /*****************************************************************************
@@ -5652,7 +5671,11 @@ GenTreeCall* Compiler::impImportIndirectCall(CORINFO_SIG_INFO* sig, IL_OFFSETX i
     /* Get the function pointer */
 
     GenTreePtr fptr = impPopStack().val;
-    assert(genActualType(fptr->gtType) == TYP_I_IMPL);
+
+    // The function pointer is typically a sized to match the target pointer size
+    // However, stubgen IL optimization can change LDC.I8 to LDC.I4
+    // See ILCodeStream::LowerOpcode
+    assert(genActualType(fptr->gtType) == TYP_I_IMPL || genActualType(fptr->gtType) == TYP_INT);
 
 #ifdef DEBUG
     // This temporary must never be converted to a double in stress mode,
@@ -6126,25 +6149,6 @@ void Compiler::impInsertHelperCall(CORINFO_HELPER_DESC* helperInfo)
     impAppendTree(callout, (unsigned)CHECK_SPILL_NONE, impCurStmtOffs);
 }
 
-void Compiler::impInsertCalloutForDelegate(CORINFO_METHOD_HANDLE callerMethodHnd,
-                                           CORINFO_METHOD_HANDLE calleeMethodHnd,
-                                           CORINFO_CLASS_HANDLE  delegateTypeHnd)
-{
-#ifdef FEATURE_CORECLR
-    if (!info.compCompHnd->isDelegateCreationAllowed(delegateTypeHnd, calleeMethodHnd))
-    {
-        // Call the JIT_DelegateSecurityCheck helper before calling the actual function.
-        // This helper throws an exception if the CLR host disallows the call.
-
-        GenTreePtr helper = gtNewHelperCallNode(CORINFO_HELP_DELEGATE_SECURITY_CHECK, TYP_VOID, GTF_EXCEPT,
-                                                gtNewArgList(gtNewIconEmbClsHndNode(delegateTypeHnd),
-                                                             gtNewIconEmbMethHndNode(calleeMethodHnd)));
-        // Append the callout statement
-        impAppendTree(helper, (unsigned)CHECK_SPILL_NONE, impCurStmtOffs);
-    }
-#endif // FEATURE_CORECLR
-}
-
 // Checks whether the return types of caller and callee are compatible
 // so that callee can be tail called. Note that here we don't check
 // compatibility in IL Verifier sense, but on the lines of return type
@@ -6396,6 +6400,8 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
     const char*            szCanTailCallFailReason        = nullptr;
     int                    tailCall                       = prefixFlags & PREFIX_TAILCALL;
     bool                   readonlyCall                   = (prefixFlags & PREFIX_READONLY) != 0;
+
+    CORINFO_RESOLVED_TOKEN* ldftnToken = nullptr;
 
     // Synchronized methods need to call CORINFO_HELP_MON_EXIT at the end. We could
     // do that before tailcalls, but that is probably not the intended
@@ -6967,6 +6973,14 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
     }
 #endif // !FEATURE_VARARG
 
+#ifdef UNIX_X86_ABI
+    if (call->gtCall.callSig == nullptr)
+    {
+        call->gtCall.callSig  = new (this, CMK_CorSig) CORINFO_SIG_INFO;
+        *call->gtCall.callSig = *sig;
+    }
+#endif // UNIX_X86_ABI
+
     if ((sig->callConv & CORINFO_CALLCONV_MASK) == CORINFO_CALLCONV_VARARG ||
         (sig->callConv & CORINFO_CALLCONV_MASK) == CORINFO_CALLCONV_NATIVEVARARG)
     {
@@ -7300,6 +7314,21 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
         exactContextHnd = nullptr;
     }
 
+    if ((opcode == CEE_NEWOBJ) && ((clsFlags & CORINFO_FLG_DELEGATE) != 0))
+    {
+        // Only verifiable cases are supported.
+        // dup; ldvirtftn; newobj; or ldftn; newobj.
+        // IL test could contain unverifiable sequence, in this case optimization should not be done.
+        if (impStackHeight() > 0)
+        {
+            typeInfo delegateTypeInfo = impStackTop().seTypeInfo;
+            if (delegateTypeInfo.IsToken())
+            {
+                ldftnToken = delegateTypeInfo.GetToken();
+            }
+        }
+    }
+
     //-------------------------------------------------------------------------
     // The main group of arguments
 
@@ -7380,7 +7409,7 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
             {
                 // New inliner morph it in impImportCall.
                 // This will allow us to inline the call to the delegate constructor.
-                call = fgOptimizeDelegateConstructor(call->AsCall(), &exactContextHnd);
+                call = fgOptimizeDelegateConstructor(call->AsCall(), &exactContextHnd, ldftnToken);
             }
 
             if (!bIntrinsicImported)
@@ -9544,7 +9573,7 @@ void Compiler::impImportBlockCode(BasicBlock* block)
             /* Has it been a while since we last saw a non-empty stack (which
                guarantees that the tree depth isnt accumulating. */
 
-            if ((opcodeOffs - lastSpillOffs) > 200)
+            if ((opcodeOffs - lastSpillOffs) > MAX_TREE_SIZE && impCanSpillNow(prevOpcode))
             {
                 impSpillStackEnsure();
                 lastSpillOffs = opcodeOffs;
@@ -10084,7 +10113,11 @@ void Compiler::impImportBlockCode(BasicBlock* block)
                     const bool isSingleILStoreLocal =
                         !lvaTable[lclNum].lvHasMultipleILStoreOp && !lvaTable[lclNum].lvHasLdAddrOp;
 
-                    if (isSingleILStoreLocal)
+                    // Conservative check that there is just one
+                    // definition that reaches this store.
+                    const bool hasSingleReachingDef = (block->bbStackDepthOnEntry() == 0);
+
+                    if (isSingleILStoreLocal && hasSingleReachingDef)
                     {
                         lvaUpdateClass(lclNum, op1, clsHnd);
                     }
@@ -12283,7 +12316,8 @@ void Compiler::impImportBlockCode(BasicBlock* block)
                     return;
                 }
 
-                impPushOnStack(op1, typeInfo(resolvedToken.hMethod));
+                CORINFO_RESOLVED_TOKEN* heapToken = impAllocateToken(resolvedToken);
+                impPushOnStack(op1, typeInfo(heapToken));
 
                 break;
             }
@@ -12388,7 +12422,10 @@ void Compiler::impImportBlockCode(BasicBlock* block)
                     return;
                 }
 
-                impPushOnStack(fptr, typeInfo(resolvedToken.hMethod));
+                CORINFO_RESOLVED_TOKEN* heapToken = impAllocateToken(resolvedToken);
+                assert(heapToken->tokenType == CORINFO_TOKENKIND_Method);
+                heapToken->tokenType = CORINFO_TOKENKIND_Ldvirtftn;
+                impPushOnStack(fptr, typeInfo(heapToken));
 
                 break;
             }
@@ -12848,14 +12885,6 @@ void Compiler::impImportBlockCode(BasicBlock* block)
                         assert(verCheckDelegateCreation(delegateCreateStart, codeAddr - 1, delegateMethodRef));
                     }
 #endif
-
-#ifdef FEATURE_CORECLR
-                    // In coreclr the delegate transparency rule needs to be enforced even if verification is disabled
-                    typeInfo              tiActualFtn          = impStackTop(0).seTypeInfo;
-                    CORINFO_METHOD_HANDLE delegateMethodHandle = tiActualFtn.GetMethod2();
-
-                    impInsertCalloutForDelegate(info.compMethodHnd, delegateMethodHandle, resolvedToken.hClass);
-#endif // FEATURE_CORECLR
                 }
 
                 callTyp = impImportCall(opcode, &resolvedToken, constraintCall ? &constrainedResolvedToken : nullptr,
@@ -18507,6 +18536,18 @@ void Compiler::impDevirtualizeCall(GenTreeCall*            call,
     CORINFO_CLASS_HANDLE baseClass        = info.compCompHnd->getMethodClass(baseMethod);
     const DWORD          baseClassAttribs = info.compCompHnd->getClassAttribs(baseClass);
 
+#if !defined(FEATURE_CORECLR)
+    // If base class is not beforefieldinit then devirtualizing may
+    // cause us to miss a base class init trigger. Spec says we don't
+    // need a trigger for ref class callvirts but desktop seems to
+    // have one anyways. So defer.
+    if ((baseClassAttribs & CORINFO_FLG_BEFOREFIELDINIT) == 0)
+    {
+        JITDUMP("\nimpDevirtualizeCall: base class has precise initialization, sorry\n");
+        return;
+    }
+#endif // FEATURE_CORECLR
+
     // Is the call an interface call?
     const bool isInterface = (baseClassAttribs & CORINFO_FLG_INTERFACE) != 0;
 
@@ -18702,4 +18743,19 @@ void Compiler::impDevirtualizeCall(GenTreeCall*            call,
                baseMethodName, derivedClassName, derivedMethodName, note);
     }
 #endif // defined(DEBUG)
+}
+
+//------------------------------------------------------------------------
+// impAllocateToken: create CORINFO_RESOLVED_TOKEN into jit-allocated memory and init it.
+//
+// Arguments:
+//    token - init value for the allocated token.
+//
+// Return Value:
+//    pointer to token into jit-allocated memory.
+CORINFO_RESOLVED_TOKEN* Compiler::impAllocateToken(CORINFO_RESOLVED_TOKEN token)
+{
+    CORINFO_RESOLVED_TOKEN* memory = (CORINFO_RESOLVED_TOKEN*)compGetMem(sizeof(token));
+    *memory                        = token;
+    return memory;
 }

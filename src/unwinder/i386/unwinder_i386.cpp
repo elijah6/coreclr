@@ -76,7 +76,7 @@ OOPStackUnwinderX86::VirtualUnwind(
 
     FillRegDisplay(&rd, ContextRecord);
 
-    rd.SP = ContextRecord->ResumeEsp;
+    rd.SP = ContextRecord->Esp;
     rd.PCTAddr = (UINT_PTR)&(ContextRecord->Eip);
 
     if (ContextPointers)
@@ -117,7 +117,9 @@ OOPStackUnwinderX86::VirtualUnwind(
 #endif // UNIX_X86_ABI
 
     ContextRecord->Esp = rd.SP - paramSize;
-    ContextRecord->ResumeEsp = rd.SP + paddingSize;
+    ContextRecord->ResumeEsp = ExecutionManager::IsManagedCode((PCODE) rd.ControlPC)
+                             ? rd.SP + paddingSize
+                             : ContextRecord->Esp;
     ContextRecord->Eip = rd.ControlPC;
 
     // For x86, the value of Establisher Frame Pointer is Caller SP

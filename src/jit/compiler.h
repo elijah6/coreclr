@@ -2809,6 +2809,9 @@ protected:
     static fgWalkPreFn lvaMarkLclRefsCallback;
     void lvaMarkLclRefs(GenTreePtr tree);
 
+    bool IsDominatedByExceptionalEntry(BasicBlock* block);
+    void SetVolatileHint(LclVarDsc* varDsc);
+
     // Keeps the mapping from SSA #'s to VN's for the implicit memory variables.
     PerSsaArray lvMemoryPerSsaData;
     unsigned    lvMemoryNumSsaNames;
@@ -2880,6 +2883,7 @@ protected:
     StackEntry impPopStack(CORINFO_CLASS_HANDLE& structTypeRet);
     GenTreePtr impPopStack(typeInfo& ti);
     StackEntry& impStackTop(unsigned n = 0);
+    unsigned impStackHeight();
 
     void impSaveStackState(SavedStack* savePtr, bool copy);
     void impRestoreStackState(SavedStack* savePtr);
@@ -2902,10 +2906,6 @@ protected:
     void impInsertHelperCall(CORINFO_HELPER_DESC* helperCall);
     void impHandleAccessAllowed(CorInfoIsAccessAllowedResult result, CORINFO_HELPER_DESC* helperCall);
     void impHandleAccessAllowedInternal(CorInfoIsAccessAllowedResult result, CORINFO_HELPER_DESC* helperCall);
-
-    void impInsertCalloutForDelegate(CORINFO_METHOD_HANDLE callerMethodHnd,
-                                     CORINFO_METHOD_HANDLE calleeMethodHnd,
-                                     CORINFO_CLASS_HANDLE  delegateTypeHnd);
 
     var_types impImportCall(OPCODE                  opcode,
                             CORINFO_RESOLVED_TOKEN* pResolvedToken,
@@ -3136,6 +3136,11 @@ private:
     IL_OFFSETX impCurILOffset(IL_OFFSET offs, bool callInstruction = false);
 
     //---------------- Spilling the importer stack ----------------------------
+
+    // The maximum number of bytes of IL processed without clean stack state.
+    // It allows to limit the maximum tree size and depth.
+    static const unsigned MAX_TREE_SIZE = 200;
+    bool impCanSpillNow(OPCODE prevOpcode);
 
     struct PendingDsc
     {
@@ -3388,6 +3393,8 @@ private:
     bool impIsImplicitTailCallCandidate(
         OPCODE curOpcode, const BYTE* codeAddrOfNextOpcode, const BYTE* codeEnd, int prefixFlags, bool isRecursive);
 
+    CORINFO_RESOLVED_TOKEN* impAllocateToken(CORINFO_RESOLVED_TOKEN token);
+
     /*
     XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
     XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
@@ -3639,7 +3646,7 @@ public:
 
     GenTreePtr fgGetCritSectOfStaticMethod();
 
-#if !defined(_TARGET_X86_)
+#if FEATURE_EH_FUNCLETS
 
     void fgAddSyncMethodEnterExit();
 
@@ -3647,7 +3654,7 @@ public:
 
     void fgConvertSyncReturnToLeave(BasicBlock* block);
 
-#endif // !_TARGET_X86_
+#endif // FEATURE_EH_FUNCLETS
 
     void fgAddReversePInvokeEnterExit();
 
@@ -4085,6 +4092,8 @@ protected:
                           // by fgBuildDomTree to build the dominance tree structure.
                           // Based on: A Simple, Fast Dominance Algorithm
                           // by Keith D. Cooper, Timothy J. Harvey, and Ken Kennedy
+
+    void fgCompDominatedByExceptionalEntryBlocks();
 
     BlockSet_ValRet_T fgGetDominatorSet(BasicBlock* block); // Returns a set of blocks that dominate the given block.
     // Note: this is relatively slow compared to calling fgDominate(),
@@ -4733,7 +4742,9 @@ private:
     void fgNoteNonInlineCandidate(GenTreeStmt* stmt, GenTreeCall* call);
     static fgWalkPreFn fgFindNonInlineCandidate;
 #endif
-    GenTreePtr fgOptimizeDelegateConstructor(GenTreeCall* call, CORINFO_CONTEXT_HANDLE* ExactContextHnd);
+    GenTreePtr fgOptimizeDelegateConstructor(GenTreeCall*            call,
+                                             CORINFO_CONTEXT_HANDLE* ExactContextHnd,
+                                             CORINFO_RESOLVED_TOKEN* ldftnToken);
     GenTreePtr fgMorphLeaf(GenTreePtr tree);
     void fgAssignSetVarDef(GenTreePtr tree);
     GenTreePtr fgMorphOneAsgBlockOp(GenTreePtr tree);
@@ -7859,13 +7870,11 @@ public:
                                     //   (or)
                                     //   3. When opts.compDbgEnC is true. (See also Compiler::compCompile).
                                     //
-// When this flag is set, jit will allocate a gc-reference local variable (lvaSecurityObject),
-// which gets reported as a GC root to stackwalker.
-// (See also ICodeManager::GetAddrOfSecurityObject.)
+        // When this flag is set, jit will allocate a gc-reference local variable (lvaSecurityObject),
+        // which gets reported as a GC root to stackwalker.
+        // (See also ICodeManager::GetAddrOfSecurityObject.)
 
-#if RELOC_SUPPORT
         bool compReloc;
-#endif
 
 #ifdef DEBUG
 #if defined(_TARGET_XARCH_) && !defined(LEGACY_BACKEND)
@@ -9473,6 +9482,10 @@ const instruction INS_ADDC            = INS_adc;
 const instruction INS_SUBC            = INS_sbc;
 const instruction INS_NOT             = INS_mvn;
 
+const instruction INS_ABS   = INS_vabs;
+const instruction INS_ROUND = INS_invalid;
+const instruction INS_SQRT  = INS_vsqrt;
+
 #endif
 
 #ifdef _TARGET_ARM64_
@@ -9493,6 +9506,10 @@ const instruction INS_BREAKPOINT      = INS_bkpt;
 const instruction INS_ADDC            = INS_adc;
 const instruction INS_SUBC            = INS_sbc;
 const instruction INS_NOT             = INS_mvn;
+
+const instruction INS_ABS   = INS_fabs;
+const instruction INS_ROUND = INS_frintn;
+const instruction INS_SQRT  = INS_fsqrt;
 
 #endif
 

@@ -104,10 +104,13 @@ set( JIT_AMD64_SOURCES
 
 set( JIT_ARM_SOURCES
   ${JIT_ARM_LEGACY_SOURCES}
+  codegenarmarch.cpp
   codegenarm.cpp
   decomposelongs.cpp
   emitarm.cpp
+  lowerarmarch.cpp
   lowerarm.cpp
+  lsraarmarch.cpp
   lsraarm.cpp
   targetarm.cpp
   unwindarm.cpp
@@ -127,9 +130,12 @@ set( JIT_I386_SOURCES
 )
 
 set( JIT_ARM64_SOURCES
+  codegenarmarch.cpp
   codegenarm64.cpp
   emitarm64.cpp
+  lowerarmarch.cpp
   lowerarm64.cpp
+  lsraarmarch.cpp
   lsraarm64.cpp
   targetarm64.cpp
   unwindarm.cpp
@@ -218,18 +224,21 @@ if (CLR_CMAKE_PLATFORM_ARCH_ARM)
     add_subdirectory(protojit)
 endif (CLR_CMAKE_PLATFORM_ARCH_ARM)
 
-if ((CLR_CMAKE_PLATFORM_ARCH_I386 OR CLR_CMAKE_PLATFORM_ARCH_AMD64) AND WIN32)
+if (CLR_CMAKE_PLATFORM_ARCH_I386 OR CLR_CMAKE_PLATFORM_ARCH_AMD64)
     # On x86, build RyuJIT/ARM32 cross-compiling altjit.
     # On amd64, build RyuJIT/ARM64 cross-compiling altjit.
     add_subdirectory(protononjit)
+endif ()
 
-    # Build Linux/x86-running-on-Windows altjit or
-    # Linux/AMD64-running-on-Windows altjit..
+if ((CLR_CMAKE_PLATFORM_ARCH_I386 OR CLR_CMAKE_PLATFORM_ARCH_AMD64) AND WIN32)
+    # On Windows, build altjit that targets the Linux ABI:
+    #   On x86, build Linux/x86 altjit. This enables UNIX_X86_ABI.
+    #   On amd64, build Linux/AMD64 altjit. This enables UNIX_AMD64_ABI and FEATURE_UNIX_AMD64_STRUCT_PASSING.
     add_subdirectory(linuxnonjit)
 endif ()
 
 if (CLR_CMAKE_PLATFORM_ARCH_I386 AND WIN32)
-    if (NOT CLR_BUILD_JIT32)
-        add_subdirectory(compatjit)
-    endif ()
+    # On Windows x86, build altjit generating Windows/ARM32 code using LEGACY_BACKEND.
+    # (Note: we could also create linuxlegacynonjit for generating Linux/ARM32 code using LEGACY_BACKEND, if needed.)
+    add_subdirectory(legacynonjit)
 endif (CLR_CMAKE_PLATFORM_ARCH_I386 AND WIN32)
